@@ -110,14 +110,15 @@ stay on the rung.
 
 ## 6. Deliverables checklist (from the assignment)
 
-- [ ] GitHub repo with complete source
-- [ ] README: setup · architecture overview · schema decisions · tradeoffs ·
+- [x] GitHub repo with complete source
+- [x] README: setup · architecture overview · schema decisions · tradeoffs ·
       what I'd improve with more time
-- [ ] Architecture notes: ingestion flow · logging strategy · scaling
-      considerations · failure-handling assumptions
-- [ ] Demo: hosted link, screenshots, or Loom
-- [ ] Frontend: cancel a conversation · list conversations · resume a
-      conversation
+- [x] Architecture notes: ingestion flow · logging strategy · scaling
+      considerations · failure-handling assumptions (`ARCHITECTURE.md`)
+- [ ] Demo: hosted link, screenshots, or Loom ← **screenshots pending (manual)**
+- [~] Frontend: list conversations [x] · resume a conversation [x] · cancel a
+      conversation [ ] (deferred to the streaming bonus — aborting an in-flight
+      response)
 - Submit to: **work@ollive.ai**
 
 ---

@@ -4,6 +4,16 @@ The schema rung: move data out of process RAM and the print statements into a
 real database. This is what the assignment grades on — "sensible schema design
 and practical tradeoffs."
 
+> **Two deviations from this original plan, discovered during implementation**
+> (kept here to show how the design evolved):
+> 1. **No Docker Compose yet.** We run a **standalone local Postgres**, not a
+>    Compose service — the one-command Compose setup is deferred to the Docker
+>    bonus. The "run via Docker Compose" and `docker-compose.yml` references
+>    below are aspirational, not what shipped.
+> 2. **Schema is created out-of-band, not on startup.** `init_db()` is **not**
+>    called on app boot (that caused a concurrent-DDL race between the two
+>    services); it's a one-time `python -m db.init`. See the Migrations section.
+
 ## Decisions
 
 - **Database:** Postgres from the start, run via **Docker Compose** (this also

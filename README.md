@@ -1,27 +1,61 @@
 # chatbot-app
 
-An LLM inference logging & ingestion system, built slowly and steadily as a
-learning project. See [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the roadmap.
+A lightweight **LLM inference logging & ingestion system** — a chatbot whose
+every model call is auto-instrumented, shipped out of the request path, and
+persisted for observability. Built slowly and steadily as a learning project;
+see [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the rung-by-rung roadmap and
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) for the architecture notes.
 
-**Stack:** FastAPI (Python) · Anthropic (Claude) · Postgres + SQLModel · plain HTML/JS UI (later)
+**Stack:** FastAPI (Python) · Anthropic (Claude) · Postgres + SQLModel · plain
+HTML/JS UI (no framework, on purpose — every layer stays visible).
 
-## Current stage
+## Architecture overview
 
-**Rung 6 — persist to Postgres.** Two services: the **chatbot** (`app/`) and a
-separate **ingestion** API (`ingestion/`). Every Claude call goes through
-`TracedClient` (see [`sdk/DESIGN.md`](./sdk/DESIGN.md)), which captures a
-structured `InferenceLog` and hands it to a **`QueueSink`** wrapping an
-`HttpSink`: the event is enqueued instantly and a background thread ships it to
-ingestion, so log delivery can be slow or fail without ever blocking or breaking
-the chat. Data is now persisted in Postgres (see
-[`db/DESIGN.md`](./db/DESIGN.md)): the chatbot writes `conversations` +
-`messages` (the in-memory store is retired), and ingestion writes
-`inference_logs`.
+Two independent FastAPI services share one Postgres database:
+
+- **chatbot** (`app/`, port 8000) — serves the UI and the `POST /chat` endpoint,
+  persists `conversations` + `messages`, and exposes reads for the UI
+  (`GET /conversations`, `GET /conversations/{id}`).
+- **ingestion** (`ingestion/`, port 8001) — receives inference logs, validates
+  them, stores `inference_logs`, and serves `GET /stats`.
+
+Every Claude call goes through **`TracedClient`** (the SDK wrapper, see
+[`sdk/DESIGN.md`](./sdk/DESIGN.md)), which captures a structured `InferenceLog`
+and hands it to a **`QueueSink`**: the event is enqueued instantly and a
+background thread ships it to ingestion over HTTP, so log delivery can be slow or
+fail **without ever blocking or breaking the chat**. The chatbot writes
+`conversations` + `messages`; ingestion writes `inference_logs` — each service
+owns its own tables (details in [`db/DESIGN.md`](./db/DESIGN.md)).
+
+```
+browser ──▶ chatbot :8000 ──(TracedClient → QueueSink, async)──▶ ingestion :8001
+   ▲            │  writes conversations, messages                     │ writes
+   └── UI ──────┘                     Postgres  ◀───────────────────── inference_logs
+                          reads: /conversations, /conversations/{id}, /stats
+```
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full ingestion flow, logging
+strategy, scaling considerations, and failure-handling assumptions.
+
+## Features
+
+- **Chatbot:** multi-turn conversations with short context (last N messages),
+  persisted to Postgres (survives restarts).
+- **Auto-instrumenting SDK:** a transparent `TracedClient` wrapper captures
+  model, provider, latency, tokens, status/errors, timestamps, session ID, and
+  input/output previews — chat code carries zero logging concerns.
+- **Near-real-time ingestion:** non-blocking, failure-safe log shipping to a
+  separate ingestion service that validates and stores each log.
+- **UI:** a single-page chat with a conversation sidebar — **list** past
+  conversations and **resume** any of them. Assistant replies render as markdown;
+  a typing indicator shows while awaiting a reply.
+- **Stats:** `GET /stats` aggregates latency / throughput / errors over the logs
+  (the seed of a dashboard).
 
 ## Setup
 
 Prerequisites: Python 3.11+ and a running **Postgres** server (any local
-Postgres works; Docker Compose comes later).
+Postgres works; a Docker Compose one-command setup is a planned bonus).
 
 ```bash
 python3 -m venv .venv
@@ -49,28 +83,29 @@ uvicorn ingestion.main:app --port 8001 --reload
 uvicorn app.main:app --port 8000 --reload
 ```
 
-The chatbot persists conversations and messages to Postgres and ships each
-inference log to the ingestion service (`INGESTION_URL`, default
-`http://127.0.0.1:8001/logs`), which stores it in `inference_logs`. Inspect it:
+Then open **http://localhost:8000** for the chat UI. The chatbot persists
+conversations and messages to Postgres and ships each inference log to the
+ingestion service (`INGESTION_URL`, default `http://127.0.0.1:8001/logs`), which
+stores it in `inference_logs`.
+
+## Endpoints
+
+| Method & path | Service | Purpose |
+|---|---|---|
+| `GET /` | chatbot | The chat UI (single page) |
+| `POST /chat` | chatbot | Send a message; returns reply + `session_id` |
+| `GET /conversations` | chatbot | List conversations (preview + message count), newest-active first |
+| `GET /conversations/{id}` | chatbot | Full message history for a session (resume) |
+| `POST /logs` | ingestion | Receive + validate + store an inference log |
+| `GET /stats?since=<ISO8601>` | ingestion | Latency avg / throughput / error rate over the logs |
+
+Inspect the data directly:
 
 ```bash
 psql chatbot -c "select role, content from messages order by id;"
 psql chatbot -c "select model, status, latency_ms, input_tokens, output_tokens from inference_logs;"
+curl -s http://localhost:8001/stats | python -m json.tool
 ```
-
-## Try the memory
-
-Open http://127.0.0.1:8000/docs → `POST /chat`.
-
-1. Send `{ "message": "Hi, my name is Nishchay." }` — the response includes a
-   `session_id`.
-2. Send `{ "message": "What is my name?", "session_id": "<paste it>" }` — it
-   remembers.
-3. Send `{ "message": "What is my name?" }` with **no** `session_id` — a fresh
-   conversation that does not remember.
-
-Watch the uvicorn terminal: for every call it prints the structured
-`InferenceLog` the wrapper captured (`---- inference log ----`).
 
 ## Tests
 
@@ -79,12 +114,19 @@ pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
-Unit tests make no real API calls and open no network connections. The
-`TracedClient` tests pass a **fake** Anthropic client and a **fake** sink and
-assert on what was captured; the ingestion tests use FastAPI's `TestClient` to
-check the payload contract (valid → 200, malformed → 422). The code is testable
-because the client and sink are injected — good design and testability go
-together.
+Tests make no real API calls and open no network connections. They run against
+**in-memory SQLite** (via SQLModel + a FastAPI dependency override), so no
+Postgres server is needed. The `TracedClient` tests pass a **fake** client and
+sink; the ingestion/reads/stats tests use FastAPI's `TestClient` and assert both
+the contract and that data is actually stored/returned. The code is testable
+because the client, sink, and DB session are injected — good design and
+testability go together.
+
+## Demo
+
+_Screenshots / Loom to be added._ Open http://localhost:8000 to try it: send a
+message, watch the typing indicator and markdown-rendered reply, then use the
+sidebar to list and resume conversations.
 
 ## Schema design decisions
 
@@ -105,15 +147,34 @@ The **wire model** (`sdk/events.py::InferenceLog`, pure Pydantic) is separate fr
 the **storage model** (`db/models.py::InferenceLogRow`, SQLModel), so the
 transport contract and the database schema can evolve independently.
 
-Schema creation is a one-time `python -m db.init` step, not done on app startup —
-two services racing to `CREATE TABLE` on boot causes a concurrent-DDL error, and
-schema is a single-owner concern.
+Indexes are chosen for the queries actually run: `messages(session_id)`,
+`inference_logs(session_id)`, `inference_logs(started_at)` (time-series),
+`inference_logs(status)` (error rate).
 
-## Known tradeoffs (so far)
+Schema creation is a one-time `python -m db.init` step, **not** done on app
+startup — two services racing to `CREATE TABLE` on boot causes a concurrent-DDL
+error, and schema is a single-owner concern.
 
-- No versioned migrations yet: schema is created with SQLModel `create_all` via
-  `python -m db.init`. A real system would use **Alembic** — *what I'd improve*.
-- Log shipping is non-blocking and failure-safe (in-memory queue + background
-  worker), but the queue lives *in the process*: a crash loses queued events,
-  and there is no retry or persistence. Rung 8 (an external queue) addresses
-  durability.
+## Tradeoffs & what I'd improve with more time
+
+- **No versioned migrations yet:** schema is created with SQLModel `create_all`
+  via `python -m db.init`. A real system would use **Alembic**.
+- **In-process queue:** log shipping is non-blocking and failure-safe, but the
+  queue lives in the process — a crash loses queued events, and there is no retry
+  or persistence. An **external durable broker** (event-based architecture) would
+  add durability + back-pressure.
+- **Explicit wrapper, not true auto-instrument:** capture is a transparent
+  `TracedClient`. A **monkey-patch / OTel instrumentor** (aligned to the
+  OpenTelemetry GenAI semantic conventions) would make instrumentation
+  zero-touch. A **proxy** approach (à la Helicone) is the other option.
+- **Single provider:** the wrapper is provider-agnostic by design;
+  **multi-provider** is a per-provider response adapter → same `InferenceLog`.
+- **UI markdown is not sanitized:** assistant output is rendered via `marked`
+  into `innerHTML`. Safe here (our own model's output), but production would run
+  it through a sanitizer like **DOMPurify**.
+- **Stats are all-time/overall:** `/stats` is the seed of a **dashboard** —
+  time-bucketed series and per-model grouping are the natural next step.
+- **No streaming yet:** streaming responses (and a **cancel** button for
+  in-flight requests) are a bonus.
+- **No Docker Compose yet:** a one-command `docker-compose up` for Postgres +
+  both services would simplify setup and hosting.
