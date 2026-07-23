@@ -7,9 +7,10 @@ learning project. See [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the roadmap.
 
 ## Current stage
 
-**Rung 1 — the dumbest possible chatbot.** A `POST /chat` endpoint that makes
-one Claude API call and returns the reply. No memory, no logging, no database
-yet. The LLM API is stateless — each call carries only what we send it.
+**Rung 2 — multi-turn memory.** `POST /chat` now remembers a conversation. The
+model is stateless, so memory is something we build: history is stored per
+`session_id` in an in-memory dict and resent (capped to the last N messages —
+"short context") on every turn.
 
 ## Setup
 
@@ -30,12 +31,21 @@ Get an API key at https://console.anthropic.com/ (Settings → API Keys).
 uvicorn app.main:app --reload
 ```
 
-Then try the chat endpoint from the interactive docs at
-http://127.0.0.1:8000/docs — open `POST /chat`, "Try it out", and send:
+## Try the memory
 
-```json
-{ "message": "Hello! Explain what an API is in one sentence." }
-```
+Open http://127.0.0.1:8000/docs → `POST /chat`.
 
-Watch the terminal running uvicorn — it prints the inference metadata
-(model, tokens, stop reason) that Rung 3 will eventually log.
+1. Send `{ "message": "Hi, my name is Nishchay." }` — the response includes a
+   `session_id`.
+2. Send `{ "message": "What is my name?", "session_id": "<paste it>" }` — it
+   remembers.
+3. Send `{ "message": "What is my name?" }` with **no** `session_id` — a fresh
+   conversation that does not remember.
+
+Watch the uvicorn terminal: it prints `session_id`, token usage, and
+`history_len` (which grows by 2 each turn on a reused session).
+
+## Known tradeoffs (so far)
+
+- Conversation history lives in process RAM, so it is lost on restart and not
+  shared across multiple server processes. Rung 6 moves it into a database.

@@ -130,10 +130,13 @@ stay on the rung.
 - [x] **Rung 1 — dumbest chatbot** (`POST /chat` → one Claude call → reply.
       Verified live: reply returned, and model/stop_reason/token usage printed
       from the response object. Model: claude-sonnet-5. No memory, no logging.)
-- [ ] **Rung 2 — multi-turn memory** ← next
-- [ ] Rung 3 … 8
+- [x] **Rung 2 — multi-turn memory** (per-`session_id` history in an in-memory
+      dict, resent capped to the last N messages. Verified: a reused session
+      recalls a name; a new session does not; `history_len` grows 2→4 per turn.)
+- [ ] **Rung 3 — the SDK wrapper** ← next
+- [ ] Rung 4 … 8
 
-_Next: make the chatbot remember. The LLM is stateless, so we resend prior
-messages each turn — and cap the history to the last N messages ("short
-context"). The "why" to master: where does conversation history live, and how
-do we stop it growing forever?_
+_Next: the centerpiece. Wrap the Claude call so that around it we capture
+latency, model, provider, token usage, status/error, timestamps, session id,
+and input/output previews — WITHOUT cluttering the chat code. The "why" to
+master: how do I capture all this cleanly? (wrapper → decorator → auto-instrument)_
