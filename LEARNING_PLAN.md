@@ -127,9 +127,13 @@ stay on the rung.
 - [x] Plan documented
 - [x] **Rung 0 — bare FastAPI app** (routing + Pydantic validation; verified
       valid request works and a bad payload returns 422 without our code running)
-- [ ] **Rung 1 — dumbest chatbot** ← next
-- [ ] Rung 2 … 8
+- [x] **Rung 1 — dumbest chatbot** (`POST /chat` → one Claude call → reply.
+      Verified live: reply returned, and model/stop_reason/token usage printed
+      from the response object. Model: claude-sonnet-5. No memory, no logging.)
+- [ ] **Rung 2 — multi-turn memory** ← next
+- [ ] Rung 3 … 8
 
-_Next: `POST /chat` that calls an LLM API once and returns the reply — hardcoded
-model, no memory, no logging. The "why" to master: the LLM API is just an HTTP
-call; find where token counts live in the response._
+_Next: make the chatbot remember. The LLM is stateless, so we resend prior
+messages each turn — and cap the history to the last N messages ("short
+context"). The "why" to master: where does conversation history live, and how
+do we stop it growing forever?_
