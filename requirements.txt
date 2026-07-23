@@ -3,3 +3,5 @@ uvicorn[standard]
 anthropic
 python-dotenv
 httpx
+sqlmodel
+psycopg[binary]

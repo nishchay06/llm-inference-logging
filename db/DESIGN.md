@@ -79,9 +79,12 @@ README's "schema design decisions."
 
 ## Migrations
 
-Start simple: `SQLModel.metadata.create_all(engine)` at startup (idempotent —
-creates tables if absent). Note in the README that a real system uses **Alembic**
-for versioned migrations; that's a "what I'd improve with more time" item.
+Schema is created by a one-time `python -m db.init` step
+(`SQLModel.metadata.create_all`), **not** on app startup. Reason (found during
+implementation): two services each calling `create_all` on boot race on DDL and
+one crashes with a Postgres catalog unique-violation. Single-owner schema
+creation avoids that. A real system uses **Alembic** for versioned migrations —
+a "what I'd improve with more time" item.
 
 ## Testing
 

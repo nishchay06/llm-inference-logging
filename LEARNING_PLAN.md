@@ -143,13 +143,17 @@ stay on the rung.
       Rung 5 fixes.)
 - [x] **Rung 5 — safe, non-blocking logging** (`QueueSink`: enqueue instantly,
       background worker delivers and swallows failures. Built test-first
-      (red→green). Unit test proves chat succeeds when delivery fails. NOTE:
-      end-to-end demo not re-run locally — the dev machine ran out of RAM to
-      import the SDK; the guarantee is covered by the unit test.)
-- [ ] **Rung 6 — persist to a database (schema)** ← next
-- [ ] Rung 7 … 8
+      (red→green). Verified end-to-end: with ingestion DOWN, `/chat` returns 200.)
+- [x] **Rung 6 — persist to Postgres** (SQLModel; `db/` package. Chatbot owns
+      conversations+messages (in-memory dict retired), ingestion owns
+      inference_logs. Separate tables (app data vs telemetry); wire-model vs
+      storage-model split; schema via one-time `python -m db.init` (NOT on
+      startup — avoids a concurrent-DDL race between the two services). Verified
+      end-to-end: all three tables populate; DB-backed memory works. Design in
+      `db/DESIGN.md`.)
+- [ ] **Rung 7 — close the loop (list/resume conversations + stats)** ← next
+- [ ] Rung 8 (bonuses)
 
-_Next: ingestion writes to Postgres instead of printing. Design the tables:
-conversations, messages, inference_logs. Learn an ORM (SQLModel pairs well with
-FastAPI) + migrations. The "why" to master: should chat messages and inference
-logs live in the same table? Why or why not? (the schema tradeoff they care about)_
+_Next: reads. List conversations and resume a conversation (frontend spec), plus
+a simple stats endpoint over inference_logs (avg latency, error count) — the seed
+of the dashboard. The "why" to master: what queries does the product actually need?_

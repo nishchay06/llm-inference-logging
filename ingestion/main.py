@@ -1,10 +1,16 @@
-from fastapi import FastAPI
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI
+from sqlmodel import Session
 
+from db.engine import get_session
+from db.models import InferenceLogRow
 from sdk.events import InferenceLog
 
-# A SEPARATE service from the chatbot. It receives inference logs over HTTP.
-# For now it just validates and prints; Rung 6 will store them in a database.
-app = FastAPI(title="Ingestion — Rung 4")
+load_dotenv()
+
+# Schema is created out-of-band by `python -m db.init` (see db/init.py), not on
+# startup — see the note in app/main.py.
+app = FastAPI(title="Ingestion — Rung 6")
 
 
 @app.get("/hello")
@@ -13,11 +19,9 @@ def hello():
 
 
 @app.post("/logs")
-def ingest(event: InferenceLog):
-    # FastAPI validates the incoming JSON against InferenceLog automatically —
-    # the SAME schema the SDK used to build it. That shared model IS the
-    # contract between the two services. A malformed payload never reaches this
-    # body: it gets a 422 first (the Rung 0 lesson, now across a network).
-    print("==== ingested inference log ====")
-    print(event.model_dump_json(indent=2))
-    return {"status": "received", "event_id": event.event_id}
+def ingest(event: InferenceLog, session: Session = Depends(get_session)):
+    # FastAPI validated the incoming JSON against InferenceLog (the wire model);
+    # we map it to InferenceLogRow (the storage model) and insert.
+    session.add(InferenceLogRow(**event.model_dump()))
+    session.commit()
+    return {"status": "stored", "event_id": event.event_id}
