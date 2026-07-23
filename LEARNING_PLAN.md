@@ -151,7 +151,7 @@ stay on the rung.
       startup — avoids a concurrent-DDL race between the two services). Verified
       end-to-end: all three tables populate; DB-backed memory works. Design in
       `db/DESIGN.md`.)
-- [~] **Rung 7 — close the loop (list/resume conversations + stats)** ← in progress
+- [x] **Rung 7 — close the loop (list/resume conversations + stats)**
       - [x] **Reads backend** (TDD, all live-verified against Postgres):
             `GET /conversations` (list: preview from first user message +
             message_count, ordered by updated_at; one aggregate query, not N+1),
@@ -160,12 +160,17 @@ stay on the rung.
             throughput count / error rate over inference_logs) on ingestion.
             Single-owner endpoints — neither service reads the other's tables.
             Design + OSS-tool inspiration in `RUNG7_DESIGN.md`.
-      - [ ] **Frontend** — wire plain HTML/JS: list conversations, resume a
-            conversation (the assignment's named UI behaviours). ← next
+      - [x] **Frontend** — the project's first UI: a single plain HTML/JS page
+            (`app/static/index.html`, served at `/`) — chat window + conversation
+            sidebar over `/chat`, `/conversations`, `/conversations/{id}`. Covers
+            "expose a simple UI" + the named list/resume behaviours. Verified in
+            the browser end-to-end; every reply logged (6 logs = 6 replies, 0
+            dropped) through the async QueueSink.
 - [ ] Rung 8 (bonuses)
 
-_Next: the frontend for Rung 7 — a plain HTML/JS view that lists conversations
-and lets you resume one (calls the two GET endpoints above). "Cancel a
-conversation" (the third UI behaviour) is deferred to the streaming bonus — it's
-about aborting an in-flight response. The /stats endpoint is the seed of the
-"Latency + Throughput + Errors dashboards" bonus._
+_Next: Rung 8 bonuses, by curiosity. Highest impact-per-hour: Docker Compose
+one-command setup, multi-provider (falls out of the clean wrapper), streaming
+responses (which also unlocks the deferred "cancel a conversation" UI). The
+/stats endpoint is the seed of the "Latency + Throughput + Errors dashboards"
+bonus. "Cancel a conversation" (the 3rd UI behaviour) is still deferred — it's
+aborting an in-flight response, so it pairs with streaming._

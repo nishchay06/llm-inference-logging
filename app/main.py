@@ -1,10 +1,12 @@
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -32,6 +34,15 @@ traced = TracedClient(
 
 MODEL = "claude-sonnet-5"
 MAX_CONTEXT_MESSAGES = 10
+
+
+INDEX_HTML = Path(__file__).parent / "static" / "index.html"
+
+
+@app.get("/")
+def index():
+    """Serve the single-page UI (chat + list/resume conversations)."""
+    return FileResponse(INDEX_HTML)
 
 
 @app.get("/hello")
