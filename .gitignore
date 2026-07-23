@@ -14,3 +14,6 @@ venv/
 
 # OS
 .DS_Store
+
+# Session handoff docs (local, not committed)
+.handoff/
