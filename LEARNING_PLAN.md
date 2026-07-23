@@ -125,7 +125,11 @@ stay on the rung.
 ## 7. Where I am
 
 - [x] Plan documented
-- [ ] **Rung 0 — bare FastAPI app** ← start here
-- [ ] Rung 1 … 8
+- [x] **Rung 0 — bare FastAPI app** (routing + Pydantic validation; verified
+      valid request works and a bad payload returns 422 without our code running)
+- [ ] **Rung 1 — dumbest chatbot** ← next
+- [ ] Rung 2 … 8
 
-_Next: set up Rung 0 and be able to explain every line._
+_Next: `POST /chat` that calls an LLM API once and returns the reply — hardcoded
+model, no memory, no logging. The "why" to master: the LLM API is just an HTTP
+call; find where token counts live in the response._
