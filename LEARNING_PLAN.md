@@ -141,10 +141,15 @@ stay on the rung.
       Verified: log crosses the network and is validated against the shared
       `InferenceLog` schema; with ingestion DOWN, `/chat` 500s — the coupling
       Rung 5 fixes.)
-- [ ] **Rung 5 — make logging safe (concurrency)** ← next
-- [ ] Rung 6 … 8
+- [x] **Rung 5 — safe, non-blocking logging** (`QueueSink`: enqueue instantly,
+      background worker delivers and swallows failures. Built test-first
+      (red→green). Unit test proves chat succeeds when delivery fails. NOTE:
+      end-to-end demo not re-run locally — the dev machine ran out of RAM to
+      import the SDK; the guarantee is covered by the unit test.)
+- [ ] **Rung 6 — persist to a database (schema)** ← next
+- [ ] Rung 7 … 8
 
-_Next: the key fundamental. Make log shipping non-blocking and failure-safe so
-ingestion being slow or down never affects the chat. Start with FastAPI
-`BackgroundTasks`; understand why a queue would be better still. The "why" to
-master: why must logging never block or crash the chat?_
+_Next: ingestion writes to Postgres instead of printing. Design the tables:
+conversations, messages, inference_logs. Learn an ORM (SQLModel pairs well with
+FastAPI) + migrations. The "why" to master: should chat messages and inference
+logs live in the same table? Why or why not? (the schema tradeoff they care about)_

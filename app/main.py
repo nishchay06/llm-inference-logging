@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from sdk.sinks import HttpSink
+from sdk.sinks import HttpSink, QueueSink
 from sdk.tracing import TracedClient
 
 # Load variables from a local .env file into the process environment.
@@ -18,10 +18,14 @@ app = FastAPI(title="Chatbot — Rung 4")
 # ingestion service on port 8001.
 INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
 
-# The raw provider client, wrapped so every call is instrumented. The sink now
-# POSTs each log to the ingestion service instead of printing.
+# The raw provider client, wrapped so every call is instrumented. The sink is
+# a QueueSink wrapping an HttpSink: logs are enqueued instantly and shipped to
+# ingestion on a background thread, so the chat never blocks on — or breaks
+# because of — log delivery.
 client = Anthropic()
-traced = TracedClient(client, provider="anthropic", sink=HttpSink(INGESTION_URL))
+traced = TracedClient(
+    client, provider="anthropic", sink=QueueSink(HttpSink(INGESTION_URL))
+)
 
 MODEL = "claude-sonnet-5"
 MAX_CONTEXT_MESSAGES = 10

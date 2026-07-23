@@ -7,17 +7,16 @@ learning project. See [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the roadmap.
 
 ## Current stage
 
-**Rung 4 — ship the log to an ingestion service.** There are now two services:
-the **chatbot** (`app/`) and a separate **ingestion** API (`ingestion/`). Every
-Claude call goes through `TracedClient` (see [`sdk/DESIGN.md`](./sdk/DESIGN.md)),
-which captures a structured `InferenceLog` and — via the `HttpSink` — POSTs it to
-the ingestion service. Ingestion validates the payload against the *same*
-`InferenceLog` schema (the contract between the two services) and prints it.
-Rung 6 will store it in a database.
-
-The Rung 4 sink is deliberately crude: the POST is synchronous and unguarded, so
-if ingestion is down the chat request 500s. Rung 5 makes logging non-blocking
-and failure-safe.
+**Rung 5 — safe, non-blocking logging.** Two services: the **chatbot** (`app/`)
+and a separate **ingestion** API (`ingestion/`). Every Claude call goes through
+`TracedClient` (see [`sdk/DESIGN.md`](./sdk/DESIGN.md)), which captures a
+structured `InferenceLog` and hands it to a **`QueueSink`** wrapping an
+`HttpSink`. The event is enqueued instantly; a background thread ships it to
+ingestion. So log delivery can be slow or fail without ever blocking or breaking
+the chat — if ingestion is down, `/chat` still returns 200 and the event is
+dropped with a warning. Ingestion validates each payload against the *same*
+`InferenceLog` schema (the contract between the services). Rung 6 stores it in a
+database.
 
 ## Setup
 
@@ -80,5 +79,7 @@ together.
 
 - Conversation history lives in process RAM, so it is lost on restart and not
   shared across multiple server processes. Rung 6 moves it into a database.
-- Log shipping is a synchronous, unguarded POST: the chat request blocks on it
-  and fails if ingestion is down. Rung 5 makes it non-blocking and failure-safe.
+- Log shipping is non-blocking and failure-safe (in-memory queue + background
+  worker), but the queue lives *in the process*: a crash loses queued events,
+  and there is no retry or persistence. Rung 8 (an external queue) addresses
+  durability.

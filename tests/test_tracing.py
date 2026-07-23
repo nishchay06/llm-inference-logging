@@ -92,3 +92,24 @@ def test_error_is_captured_and_reraised():
     assert log.input_tokens is None
     assert log.output_tokens is None
     assert log.input_preview == "hello"
+
+
+def test_chat_unaffected_when_log_delivery_fails():
+    """Rung 5's guarantee, end to end: if the log sink's delivery fails, the
+    chat must still succeed. With a QueueSink, delivery happens on a background
+    thread and its failure is swallowed."""
+    from sdk.sinks import QueueSink
+
+    def exploding(event):
+        raise RuntimeError("ingestion down")
+
+    client = FakeClient(response=make_response(text="still works"))
+    traced = TracedClient(client, provider="anthropic", sink=QueueSink(exploding))
+
+    resp = traced.chat(
+        model="claude-sonnet-5",
+        max_tokens=10,
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    # The chat returns normally even though logging will fail in the background.
+    assert resp.content[0].text == "still works"
