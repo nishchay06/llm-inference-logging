@@ -7,6 +7,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -36,7 +37,11 @@ MODEL = "claude-sonnet-5"
 MAX_CONTEXT_MESSAGES = 10
 
 
-INDEX_HTML = Path(__file__).parent / "static" / "index.html"
+STATIC_DIR = Path(__file__).parent / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+
+# Static assets (e.g. the vendored marked.min.js) served under /static.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")

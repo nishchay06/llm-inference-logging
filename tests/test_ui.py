@@ -16,3 +16,12 @@ def test_index_is_served():
     assert "text/html" in resp.headers["content-type"]
     # A marker from our page so we know it's our UI, not a default.
     assert "Conversations" in resp.text
+
+
+def test_vendored_marked_is_served():
+    # The markdown renderer is vendored (not a CDN link) so the demo is
+    # self-contained; make sure the /static mount serves it.
+    client = TestClient(app)
+    resp = client.get("/static/marked.min.js")
+    assert resp.status_code == 200
+    assert "marked" in resp.text
