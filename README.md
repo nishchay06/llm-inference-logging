@@ -7,12 +7,17 @@ learning project. See [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the roadmap.
 
 ## Current stage
 
-**Rung 3 — the SDK wrapper.** Every Claude call now goes through `TracedClient`
-(see [`sdk/DESIGN.md`](./sdk/DESIGN.md)), which captures a structured
-`InferenceLog` (model, provider, latency, tokens, status/errors, timestamps,
-session id, input/output previews) and hands it to a sink. The chat code in
-`app/main.py` contains no logging — capture happens entirely in the wrapper.
-The sink currently prints; Rung 4 will POST it to an ingestion service.
+**Rung 4 — ship the log to an ingestion service.** There are now two services:
+the **chatbot** (`app/`) and a separate **ingestion** API (`ingestion/`). Every
+Claude call goes through `TracedClient` (see [`sdk/DESIGN.md`](./sdk/DESIGN.md)),
+which captures a structured `InferenceLog` and — via the `HttpSink` — POSTs it to
+the ingestion service. Ingestion validates the payload against the *same*
+`InferenceLog` schema (the contract between the two services) and prints it.
+Rung 6 will store it in a database.
+
+The Rung 4 sink is deliberately crude: the POST is synchronous and unguarded, so
+if ingestion is down the chat request 500s. Rung 5 makes logging non-blocking
+and failure-safe.
 
 ## Setup
 
@@ -29,9 +34,19 @@ Get an API key at https://console.anthropic.com/ (Settings → API Keys).
 
 ## Run
 
+Two services, in two terminals (both from the project root, venv activated):
+
 ```bash
-uvicorn app.main:app --reload
+# terminal 1 — ingestion service
+uvicorn ingestion.main:app --port 8001 --reload
+
+# terminal 2 — chatbot
+uvicorn app.main:app --port 8000 --reload
 ```
+
+The chatbot ships logs to the ingestion service at `INGESTION_URL`
+(default `http://127.0.0.1:8001/logs`). Watch terminal 1 to see each
+`InferenceLog` arrive.
 
 ## Try the memory
 
@@ -51,3 +66,5 @@ Watch the uvicorn terminal: for every call it prints the structured
 
 - Conversation history lives in process RAM, so it is lost on restart and not
   shared across multiple server processes. Rung 6 moves it into a database.
+- Log shipping is a synchronous, unguarded POST: the chat request blocks on it
+  and fails if ingestion is down. Rung 5 makes it non-blocking and failure-safe.

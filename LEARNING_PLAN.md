@@ -137,9 +137,14 @@ stay on the rung.
       that times/captures/emits around each call, pluggable `emit` sink. Chat
       code has zero logging. Verified success + error capture; design in
       `sdk/DESIGN.md`.)
-- [ ] **Rung 4 — ship the log somewhere (crudely)** ← next
-- [ ] Rung 5 … 8
+- [x] **Rung 4 — ship the log to ingestion** (`ingestion/` service + `HttpSink`.
+      Verified: log crosses the network and is validated against the shared
+      `InferenceLog` schema; with ingestion DOWN, `/chat` 500s — the coupling
+      Rung 5 fixes.)
+- [ ] **Rung 5 — make logging safe (concurrency)** ← next
+- [ ] Rung 6 … 8
 
-_Next: swap the sink from print → an HTTP POST to a separate ingestion endpoint
-that just prints what it receives. The "why" to master: what's the contract
-(payload shape) between the SDK and the ingestion service?_
+_Next: the key fundamental. Make log shipping non-blocking and failure-safe so
+ingestion being slow or down never affects the chat. Start with FastAPI
+`BackgroundTasks`; understand why a queue would be better still. The "why" to
+master: why must logging never block or crash the chat?_

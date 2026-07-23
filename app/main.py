@@ -1,3 +1,4 @@
+import os
 import uuid
 
 from anthropic import Anthropic
@@ -5,20 +6,22 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from sdk.sinks import emit
+from sdk.sinks import HttpSink
 from sdk.tracing import TracedClient
 
-# Load variables from a local .env file into the process environment, so
-# ANTHROPIC_API_KEY becomes visible to the Anthropic client below.
+# Load variables from a local .env file into the process environment.
 load_dotenv()
 
-app = FastAPI(title="Chatbot — Rung 3")
+app = FastAPI(title="Chatbot — Rung 4")
 
-# The raw provider client, wrapped so every call is instrumented. The chat code
-# below talks to `traced`, never to the raw client — so it captures nothing and
-# cares about nothing to do with logging.
+# Where inference logs get shipped. Overridable via env; defaults to the local
+# ingestion service on port 8001.
+INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
+
+# The raw provider client, wrapped so every call is instrumented. The sink now
+# POSTs each log to the ingestion service instead of printing.
 client = Anthropic()
-traced = TracedClient(client, provider="anthropic", sink=emit)
+traced = TracedClient(client, provider="anthropic", sink=HttpSink(INGESTION_URL))
 
 MODEL = "claude-sonnet-5"
 MAX_CONTEXT_MESSAGES = 10
@@ -54,8 +57,6 @@ def chat(payload: ChatRequest):
 
     history.append({"role": "user", "content": payload.message})
 
-    # One call. All the timing, token extraction, and metadata capture happens
-    # inside the wrapper — this function stays pure chat logic.
     response = traced.chat(
         model=MODEL,
         max_tokens=1024,
