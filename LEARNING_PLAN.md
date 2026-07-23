@@ -151,9 +151,21 @@ stay on the rung.
       startup — avoids a concurrent-DDL race between the two services). Verified
       end-to-end: all three tables populate; DB-backed memory works. Design in
       `db/DESIGN.md`.)
-- [ ] **Rung 7 — close the loop (list/resume conversations + stats)** ← next
+- [~] **Rung 7 — close the loop (list/resume conversations + stats)** ← in progress
+      - [x] **Reads backend** (TDD, all live-verified against Postgres):
+            `GET /conversations` (list: preview from first user message +
+            message_count, ordered by updated_at; one aggregate query, not N+1),
+            `GET /conversations/{session_id}` (resume: ordered history, 404 if
+            missing) on the chatbot; `GET /stats?since=` (latency avg /
+            throughput count / error rate over inference_logs) on ingestion.
+            Single-owner endpoints — neither service reads the other's tables.
+            Design + OSS-tool inspiration in `RUNG7_DESIGN.md`.
+      - [ ] **Frontend** — wire plain HTML/JS: list conversations, resume a
+            conversation (the assignment's named UI behaviours). ← next
 - [ ] Rung 8 (bonuses)
 
-_Next: reads. List conversations and resume a conversation (frontend spec), plus
-a simple stats endpoint over inference_logs (avg latency, error count) — the seed
-of the dashboard. The "why" to master: what queries does the product actually need?_
+_Next: the frontend for Rung 7 — a plain HTML/JS view that lists conversations
+and lets you resume one (calls the two GET endpoints above). "Cancel a
+conversation" (the third UI behaviour) is deferred to the streaming bonus — it's
+about aborting an in-flight response. The /stats endpoint is the seed of the
+"Latency + Throughput + Errors dashboards" bonus._
