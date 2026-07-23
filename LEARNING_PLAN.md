@@ -133,10 +133,13 @@ stay on the rung.
 - [x] **Rung 2 — multi-turn memory** (per-`session_id` history in an in-memory
       dict, resent capped to the last N messages. Verified: a reused session
       recalls a name; a new session does not; `history_len` grows 2→4 per turn.)
-- [ ] **Rung 3 — the SDK wrapper** ← next
-- [ ] Rung 4 … 8
+- [x] **Rung 3 — the SDK wrapper** (`sdk/`: `InferenceLog` schema, `TracedClient`
+      that times/captures/emits around each call, pluggable `emit` sink. Chat
+      code has zero logging. Verified success + error capture; design in
+      `sdk/DESIGN.md`.)
+- [ ] **Rung 4 — ship the log somewhere (crudely)** ← next
+- [ ] Rung 5 … 8
 
-_Next: the centerpiece. Wrap the Claude call so that around it we capture
-latency, model, provider, token usage, status/error, timestamps, session id,
-and input/output previews — WITHOUT cluttering the chat code. The "why" to
-master: how do I capture all this cleanly? (wrapper → decorator → auto-instrument)_
+_Next: swap the sink from print → an HTTP POST to a separate ingestion endpoint
+that just prints what it receives. The "why" to master: what's the contract
+(payload shape) between the SDK and the ingestion service?_

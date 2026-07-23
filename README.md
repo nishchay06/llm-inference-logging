@@ -7,10 +7,12 @@ learning project. See [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the roadmap.
 
 ## Current stage
 
-**Rung 2 — multi-turn memory.** `POST /chat` now remembers a conversation. The
-model is stateless, so memory is something we build: history is stored per
-`session_id` in an in-memory dict and resent (capped to the last N messages —
-"short context") on every turn.
+**Rung 3 — the SDK wrapper.** Every Claude call now goes through `TracedClient`
+(see [`sdk/DESIGN.md`](./sdk/DESIGN.md)), which captures a structured
+`InferenceLog` (model, provider, latency, tokens, status/errors, timestamps,
+session id, input/output previews) and hands it to a sink. The chat code in
+`app/main.py` contains no logging — capture happens entirely in the wrapper.
+The sink currently prints; Rung 4 will POST it to an ingestion service.
 
 ## Setup
 
@@ -42,8 +44,8 @@ Open http://127.0.0.1:8000/docs → `POST /chat`.
 3. Send `{ "message": "What is my name?" }` with **no** `session_id` — a fresh
    conversation that does not remember.
 
-Watch the uvicorn terminal: it prints `session_id`, token usage, and
-`history_len` (which grows by 2 each turn on a reused session).
+Watch the uvicorn terminal: for every call it prints the structured
+`InferenceLog` the wrapper captured (`---- inference log ----`).
 
 ## Known tradeoffs (so far)
 
