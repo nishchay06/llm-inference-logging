@@ -62,6 +62,20 @@ Open http://127.0.0.1:8000/docs → `POST /chat`.
 Watch the uvicorn terminal: for every call it prints the structured
 `InferenceLog` the wrapper captured (`---- inference log ----`).
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -v
+```
+
+Unit tests make no real API calls and open no network connections. The
+`TracedClient` tests pass a **fake** Anthropic client and a **fake** sink and
+assert on what was captured; the ingestion tests use FastAPI's `TestClient` to
+check the payload contract (valid → 200, malformed → 422). The code is testable
+because the client and sink are injected — good design and testability go
+together.
+
 ## Known tradeoffs (so far)
 
 - Conversation history lives in process RAM, so it is lost on restart and not

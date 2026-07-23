@@ -1,0 +1,3 @@
+# Dev/test-only dependencies (kept separate from runtime requirements.txt).
+# Install with: pip install -r requirements-dev.txt
+pytest

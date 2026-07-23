@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable
-
-from anthropic import Anthropic
+from typing import TYPE_CHECKING, Any, Callable
 
 from .events import InferenceLog
+
+# We only need Anthropic for a type hint. Importing it at runtime would pull in
+# the whole SDK just to annotate one parameter — so we import it only during
+# type-checking. `from __future__ import annotations` makes the annotation a
+# string, so there's no runtime NameError.
+if TYPE_CHECKING:
+    from anthropic import Anthropic
 
 PREVIEW_CHARS = 200
 
