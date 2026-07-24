@@ -9,3 +9,6 @@
 .handoff/
 *.log
 pgdata*/
+# frontend build artifacts — the Docker `frontend` stage builds these fresh
+frontend/node_modules/
+frontend/dist/

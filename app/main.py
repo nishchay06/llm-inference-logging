@@ -72,15 +72,13 @@ MAX_CONTEXT_MESSAGES = 10
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
+# The built React app (frontend/dist) — produced by `npm run build` (locally, or
+# the Docker multi-stage build). Served at "/" when present; see end of file.
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
-# Static assets (e.g. the vendored marked.min.js) served under /static.
+# Legacy static assets (the old plain-HTML UI's marked.min.js) served under
+# /static; kept as the fallback when the React build isn't present.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/")
-def index():
-    """Serve the single-page UI (chat + list/resume conversations)."""
-    return FileResponse(INDEX_HTML)
 
 
 @app.get("/hello")
@@ -300,3 +298,16 @@ def get_conversation(session_id: str, db: Session = Depends(get_session)):
             for m in msgs
         ],
     )
+
+
+# Serve the frontend at "/", mounted LAST so every API route above takes
+# precedence. The built React app when present (production / Docker), else the
+# legacy plain-HTML page (a `uvicorn` run without `npm run build` — use
+# `npm run dev` for local frontend work).
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+else:
+
+    @app.get("/")
+    def index():
+        return FileResponse(INDEX_HTML)
