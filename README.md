@@ -55,8 +55,10 @@ strategy, scaling considerations, and failure-handling assumptions.
 - **UI:** a single-page chat with a conversation sidebar — **list** past
   conversations and **resume** any of them. Assistant replies render as markdown;
   a typing indicator shows while awaiting a reply.
-- **Stats:** `GET /stats` aggregates latency / throughput / errors over the logs
-  (the seed of a dashboard).
+- **Observability dashboard:** a CloudWatch-style console at `/dashboard`
+  (served by ingestion) — KPI cards, throughput/latency charts, a by-model
+  breakdown, and a filterable, expandable **log explorer** to diagnose failures
+  and inspect calls. See [`DASHBOARD_DESIGN.md`](./DASHBOARD_DESIGN.md).
 
 ## Quick start with Docker (recommended)
 
@@ -128,7 +130,11 @@ LLM_PROVIDER=gemini uvicorn app.main:app --port 8000   # LLM_MODEL optional (def
 | `GET /conversations` | chatbot | List conversations (preview + message count), newest-active first |
 | `GET /conversations/{id}` | chatbot | Full message history for a session (resume) |
 | `POST /logs` | ingestion | Receive + validate + store an inference log |
-| `GET /stats?since=<ISO8601>` | ingestion | Latency avg / throughput / error rate over the logs |
+| `GET /stats?since=` | ingestion | Aggregates: calls, error rate, avg + p50/p95/p99 latency, tokens |
+| `GET /stats/timeseries?since=&bucket=` | ingestion | Per-bucket calls/errors/avg-latency (charts) |
+| `GET /stats/by_model?since=` | ingestion | Per-model calls, error rate, avg latency |
+| `GET /logs?status=&provider=&model=&session_id=&q=&since=&limit=&offset=` | ingestion | Query the log stream (filtered, paginated, newest-first) |
+| `GET /dashboard` | ingestion | The observability console (charts + log explorer) |
 
 Inspect the data directly:
 
@@ -210,10 +216,14 @@ error, and schema is a single-owner concern.
 - **UI markdown is not sanitized:** assistant output is rendered via `marked`
   into `innerHTML`. Safe here (our own model's output), but production would run
   it through a sanitizer like **DOMPurify**.
-- **Stats are all-time/overall:** `/stats` is the seed of a **dashboard** —
-  time-bucketed series and per-model grouping are the natural next step.
-- **No streaming yet:** streaming responses (and a **cancel** button for
-  in-flight requests) are a bonus.
+- **Dashboard aggregation runs in Python:** percentiles and time-buckets are
+  computed in the app (DB-agnostic, so tests run on SQLite). Fine at this scale;
+  at high telemetry volume you'd push them into SQL and/or a columnar store
+  (ClickHouse) — the OLAP read path real tools use.
+- **Logs store previews, not full payloads:** the log explorer diagnoses from
+  input/output **previews (~200 chars)** + `error_type`/`error_message`, not full
+  request/response bodies — a deliberate storage/privacy tradeoff. Production
+  would store full payloads (with PII redaction) or link to a trace store.
 - **Hosting/deploy:** there's a one-command `docker compose up` for local dev
   (Postgres + both services); a hosted deployment (e.g. self-managed k8s) is a
   remaining bonus.

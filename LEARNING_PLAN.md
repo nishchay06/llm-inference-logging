@@ -180,10 +180,19 @@ stay on the rung.
             key); default via `LLM_PROVIDER`/`LLM_MODEL`. Verified live including
             switching provider mid-conversation (Gemini recalled a name Claude
             set — history is provider-agnostic). Design in `sdk/DESIGN.md`.
+      - [x] **Streaming responses (+ cancel)** — SSE `POST /chat/stream`;
+            `TracedClient.stream` tees deltas and emits one log at close
+            (success/cancelled/error) with TTFT. Frontend renders live + a
+            Cancel button (completes list/resume/**cancel**). Gemini quirks
+            handled (thinking_level + token headroom). Design in
+            `STREAMING_DESIGN.md`.
+      - [x] **Observability dashboard** — a CloudWatch-style console at
+            `/dashboard` (ingestion): KPI cards, throughput/latency charts
+            (Chart.js), by-model breakdown, and a filterable/expandable **log
+            explorer** for failure diagnosis. Endpoints: `/stats` (+percentiles),
+            `/stats/timeseries`, `/stats/by_model`, `GET /logs`. CVD-validated
+            palette. Design in `DASHBOARD_DESIGN.md`.
 
-_Next: remaining bonuses, by curiosity. Multi-provider (falls out of the clean
-wrapper), streaming responses (which also unlocks the deferred "cancel a
-conversation" UI), and a dashboard UI over `/stats` (the seed of the "Latency +
-Throughput + Errors dashboards" bonus). "Cancel a conversation" (the 3rd UI
-behaviour) is still deferred — it's aborting an in-flight response, so it pairs
-with streaming._
+_Next: remaining bonuses, by curiosity — event-based architecture (external
+durable queue replacing the in-process QueueSink), PII redaction, self-hosted
+k8s. Core + most high-value bonuses are done._
