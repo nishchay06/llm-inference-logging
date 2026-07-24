@@ -26,11 +26,27 @@ load_dotenv()
 app = FastAPI(title="Chatbot — Rung 6")
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
+REDIS_URL = os.getenv("REDIS_URL")
+
+
+def _build_inner_sink():
+    """Transport for inference logs: a durable Redis Stream when REDIS_URL is set
+    (a worker consumes it — see ingestion/worker.py), else a direct HTTP POST to
+    the ingestion service. Either way it's wrapped in a QueueSink so the chat
+    never blocks or breaks on the log path."""
+    if REDIS_URL:
+        from redis import Redis
+
+        from sdk.sinks import RedisStreamSink
+
+        return RedisStreamSink(Redis.from_url(REDIS_URL))
+    return HttpSink(INGESTION_URL)
+
 
 # Build a wrapped client for every provider whose API key is configured, so the
 # UI can switch providers per request. They share one QueueSink (one background
 # shipper). A provider with no key is simply skipped, not offered.
-_sink = QueueSink(HttpSink(INGESTION_URL))
+_sink = QueueSink(_build_inner_sink())
 TRACED: dict[str, TracedClient] = {}
 MODEL_FOR: dict[str, str] = {}
 for _provider in DEFAULT_MODELS:

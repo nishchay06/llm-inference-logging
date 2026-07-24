@@ -193,6 +193,14 @@ stay on the rung.
             `/stats/timeseries`, `/stats/by_model`, `GET /logs`. CVD-validated
             palette. Design in `DASHBOARD_DESIGN.md`.
 
-_Next: remaining bonuses, by curiosity — event-based architecture (external
-durable queue replacing the in-process QueueSink), PII redaction, self-hosted
-k8s. Core + most high-value bonuses are done._
+      - [x] **Event-based architecture** — durable broker: chatbot publishes each
+            log to a **Redis Stream** (`RedisStreamSink`, still behind `QueueSink`
+            so the chat never blocks); a separate **worker**
+            (`python -m ingestion.worker`) consumes with a group + acks
+            (at-least-once) and stores via shared `store_log`. Opt-in via
+            `REDIS_URL` (HTTP fallback otherwise). Verified in Docker incl.
+            durability: worker down → event waits in the stream → processed on
+            restart (HTTP path would have dropped it). Design in `EVENTS_DESIGN.md`.
+
+_Next: remaining bonuses, by curiosity — PII redaction, self-hosted k8s. Core +
+5 of 7 bonuses done (all but PII redaction and k8s)._

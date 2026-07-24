@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from db.engine import get_session
 from db.models import InferenceLogRow
+from ingestion.store import store_log
 from sdk.events import InferenceLog
 
 load_dotenv()
@@ -86,9 +87,8 @@ def hello():
 @app.post("/logs")
 def ingest(event: InferenceLog, session: Session = Depends(get_session)):
     # FastAPI validated the incoming JSON against InferenceLog (the wire model);
-    # we map it to InferenceLogRow (the storage model) and insert.
-    session.add(InferenceLogRow(**event.model_dump()))
-    session.commit()
+    # store_log maps it to the storage row and inserts — shared with the worker.
+    store_log(event, session)
     return {"status": "stored", "event_id": event.event_id}
 
 

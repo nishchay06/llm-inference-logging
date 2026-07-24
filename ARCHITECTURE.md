@@ -41,14 +41,18 @@ auto-captures inference metadata and ships it out of the request path.
    (`sdk/events.py`) — a pure Pydantic model that is the **wire contract**.
 2. **Emit (out of the request path).** The log is handed to a `QueueSink`
    (`sdk/sinks.py`), which puts it on an in-process queue and returns
-   immediately. A background worker thread pulls from the queue and delivers via
-   `HttpSink` — an HTTP `POST /logs` to the ingestion service.
-3. **Validate & parse.** Ingestion (`ingestion/main.py`) receives the JSON and
-   FastAPI validates it against the same `InferenceLog` model (malformed → `422`
-   before any of our code runs).
-4. **Store.** The validated wire model is mapped to `InferenceLogRow`
-   (`db/models.py`) — the **storage model**, deliberately separate — and inserted
-   into `inference_logs`. The chatbot separately persists `conversations` and
+   immediately. A background thread pulls from the queue and delivers via the
+   configured inner sink: `HttpSink` (`POST /logs`) by default, or
+   `RedisStreamSink` (`XADD` to a Redis Stream, consumed by `ingestion/worker.py`)
+   when `REDIS_URL` is set — see Failure-handling for why the broker path is
+   durable.
+3. **Validate & parse.** Ingestion validates the payload against the same
+   `InferenceLog` model — FastAPI does this for `POST /logs` (malformed → `422`);
+   the worker does it explicitly (`InferenceLog.model_validate_json`).
+4. **Store.** Both paths call the shared `store_log()`, which maps the validated
+   wire model to `InferenceLogRow` (`db/models.py`) — the **storage model**,
+   deliberately separate — and inserts into `inference_logs`. The chatbot
+   separately persists `conversations` and
    `messages` in its own request path.
 5. **Read.** `GET /conversations` and `GET /conversations/{id}` (chatbot) serve
    the UI; `GET /stats` (ingestion) aggregates latency / throughput / errors over
@@ -87,21 +91,30 @@ auto-captures inference metadata and ships it out of the request path.
 - **Telemetry is decoupled from app data.** `inference_logs.session_id` is a
   plain indexed column, **not** a foreign key — a log may reference a session
   that has no `conversations` row (e.g. an error before any message was stored).
-- **Known gap (accepted tradeoff):** the queue is **in-process**. A chatbot
-  crash loses any events still queued, and there is no retry/back-off or
-  dead-letter. This is the deliberate boundary of the current rung; durability is
-  what the *event-based architecture* bonus (an external broker) would add.
+- **Durable transport (event-based, opt-in via `REDIS_URL`).** When set, the
+  `QueueSink` wraps a `RedisStreamSink` that `XADD`s each log to a **Redis
+  Stream**; a separate **worker** (`ingestion/worker.py`) consumes it with a
+  consumer group and **acks only after storing** (at-least-once). This closes the
+  big gap: if the consumer/DB is **down, logs wait durably in the stream** and
+  are replayed on recovery — verified by stopping the worker, sending a chat, and
+  watching it persist once the worker returns. (Without `REDIS_URL`, the direct
+  HTTP path is used, where an ingestion outage drops the log.) Duplicates on
+  replay are bounded by the `event_id` primary key. Poison messages are dropped
+  after logging, not redelivered forever.
+- **Remaining small window (accepted tradeoff):** events sitting in the
+  in-process `QueueSink` when the *chatbot* crashes before `XADD` are still lost —
+  a synchronous durable write would block the chat, which we won't do.
 
 ## Scaling considerations
 
 - **Independent services.** Chatbot and ingestion are separate FastAPI apps and
   scale independently — ingestion can be replicated behind a load balancer to
   absorb log volume without touching the chat tier.
-- **The queue is the pressure valve, and the current bottleneck.** It absorbs
-  bursts today but is single-process and non-durable. The first real scaling step
-  is replacing it with a durable broker (Kafka / Redis / SQS) plus stateless
-  ingestion workers — the SDK sink stays the same shape, only its destination
-  changes.
+- **The broker is the pressure valve.** With `REDIS_URL` set, bursts absorb into
+  the Redis Stream and are drained by the worker; the consumer group means you
+  scale by **running more worker replicas** (they share the stream, each acks its
+  own entries) without touching the chat tier. The SDK sink kept the same shape —
+  only its destination changed (in-process queue → broker), exactly as designed.
 - **Database.** Indexes are chosen for the actual read paths:
   `messages(session_id)` (rebuild a conversation / context window),
   `inference_logs(session_id)` (a conversation's calls),

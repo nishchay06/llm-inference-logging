@@ -51,7 +51,9 @@ strategy, scaling considerations, and failure-handling assumptions.
   Each provider's quirks live in a small adapter (`sdk/providers.py`); the
   wrapper returns a normalized result, so the chat code is provider-agnostic.
 - **Near-real-time ingestion:** non-blocking, failure-safe log shipping to a
-  separate ingestion service that validates and stores each log.
+  separate ingestion service. Two transports: a direct HTTP `POST` (default), or
+  an **event-based** path (`REDIS_URL` set) — publish to a **Redis Stream**, a
+  separate **worker** consumes it — so an ingestion outage no longer loses logs.
 - **UI:** a single-page chat with a conversation sidebar — **list** past
   conversations and **resume** any of them. Assistant replies render as markdown;
   a typing indicator shows while awaiting a reply.
@@ -203,11 +205,14 @@ error, and schema is a single-owner concern.
 ## Tradeoffs & what I'd improve with more time
 
 - **No versioned migrations yet:** schema is created with SQLModel `create_all`
-  via `python -m db.init`. A real system would use **Alembic**.
-- **In-process queue:** log shipping is non-blocking and failure-safe, but the
-  queue lives in the process — a crash loses queued events, and there is no retry
-  or persistence. An **external durable broker** (event-based architecture) would
-  add durability + back-pressure.
+  via `python -m db.init`. `create_all` never ALTERs existing tables, so adding a
+  column (e.g. `ttft_ms`) needs a fresh DB or a manual `ALTER` — a real system
+  would use **Alembic**.
+- **Durability window at the producer:** with `REDIS_URL` set, logs go through a
+  durable Redis Stream + worker, so an ingestion/DB outage no longer loses them
+  (they replay from the stream). The remaining gap is the in-process `QueueSink`
+  buffer — a chatbot crash before `XADD` loses those few events; a synchronous
+  durable write would block the chat, so we don't.
 - **Explicit wrapper, not true auto-instrument:** capture is a transparent
   `TracedClient`. A **monkey-patch / OTel instrumentor** (aligned to the
   OpenTelemetry GenAI semantic conventions) would make instrumentation

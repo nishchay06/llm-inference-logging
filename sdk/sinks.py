@@ -13,6 +13,23 @@ def print_sink(event: InferenceLog) -> None:
     print(event.model_dump_json(indent=2))
 
 
+class RedisStreamSink:
+    """Publish the log to a Redis Stream (the event-based transport). `XADD`
+    appends the event as JSON; a separate worker consumes and persists it.
+
+    Like HttpSink, this is synchronous/unguarded on its own — wrap it in a
+    QueueSink so a slow/unavailable broker never blocks or breaks the chat.
+    Durability past the hand-off is the broker's job (the consumer can be down
+    and events wait in the stream)."""
+
+    def __init__(self, client, stream: str = "inference_logs"):
+        self._client = client
+        self._stream = stream
+
+    def __call__(self, event: InferenceLog) -> None:
+        self._client.xadd(self._stream, {"data": event.model_dump_json()})
+
+
 class HttpSink:
     """POST the log to the ingestion service.
 

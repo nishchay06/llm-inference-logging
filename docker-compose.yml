@@ -1,9 +1,14 @@
-# One-command local stack: Postgres + both FastAPI services.
+# One-command local stack: Postgres + Redis + chatbot + ingestion API + a
+# broker worker.
 #
 #   docker compose up --build
 #
 # Reads ANTHROPIC_API_KEY from a .env file next to this one (compose picks it
-# up automatically for ${...} interpolation). Then open http://localhost:8000.
+# up automatically for ${...} interpolation). Then open http://localhost:8000
+# (chat) and http://localhost:8001/dashboard (observability).
+#
+# Log path here is event-based: the chatbot publishes to a Redis Stream and the
+# `worker` consumes it into Postgres (durable across an ingestion outage).
 
 services:
   db:
@@ -18,6 +23,16 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -47,13 +62,28 @@ services:
       db-init:
         condition: service_completed_successfully
 
+  # Broker consumer: reads the Redis Stream and persists logs to Postgres.
+  worker:
+    image: chatbot-app:latest
+    build: .
+    command: python -m ingestion.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   chatbot:
     image: chatbot-app:latest
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
       DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
-      INGESTION_URL: http://ingestion:8001/logs
+      # Event-based transport: publish logs to Redis (the worker consumes them).
+      REDIS_URL: redis://redis:6379/0
       # Provider selection (default anthropic). For Gemini set LLM_PROVIDER=gemini
       # and GEMINI_API_KEY in .env; ANTHROPIC_API_KEY is optional then.
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
@@ -65,8 +95,8 @@ services:
     depends_on:
       db-init:
         condition: service_completed_successfully
-      ingestion:
-        condition: service_started
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:
