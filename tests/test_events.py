@@ -89,3 +89,21 @@ def test_worker_handle_entry_poison_raises():
     with _sqlite_session() as s:
         with pytest.raises(PoisonMessage):
             handle_entry({"data": "not-valid-json"}, s)
+
+
+def test_produce_then_consume_roundtrip():
+    """The producer and consumer must agree on the stream envelope: whatever
+    RedisStreamSink XADDs must be exactly what the worker can consume + store.
+    (Guards against one side changing the field name/shape.)"""
+    r = _FakeRedis()
+    ev = _event(model="claude-sonnet-5", output_preview="hello there")
+    RedisStreamSink(r, stream="inference_logs")(ev)
+
+    # feed the exact XADDed fields into the worker's handler
+    _stream, fields = r.added[0]
+    with _sqlite_session() as s:
+        handle_entry(fields, s)
+        rows = s.exec(select(InferenceLogRow)).all()
+    assert len(rows) == 1
+    assert rows[0].event_id == ev.event_id
+    assert rows[0].output_preview == "hello there"

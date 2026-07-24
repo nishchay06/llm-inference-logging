@@ -171,6 +171,27 @@ def test_timeseries_and_by_model_honor_filters(client_and_engine):
     assert sum(i["calls"] for i in bm["items"]) == 1
 
 
+def test_post_logs_then_get_logs_roundtrip(client_and_engine):
+    """The write path (POST /logs → store_log) and the dashboard query path
+    (GET /logs) agree end-to-end: a posted log is retrievable via the explorer."""
+    client, _ = client_and_engine
+    payload = {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "status": "success",
+        "started_at": "2026-01-01T00:00:00Z",
+        "ended_at": "2026-01-01T00:00:01Z",
+        "latency_ms": 150.0,
+        "input_preview": "roundtrip-marker",
+    }
+    assert client.post("/logs", json=payload).status_code == 200
+
+    body = client.get("/logs", params={"q": "roundtrip-marker"}).json()
+    assert body["total"] == 1
+    assert body["items"][0]["model"] == "claude-sonnet-5"
+    assert body["items"][0]["input_preview"] == "roundtrip-marker"
+
+
 def test_dashboard_page_served(client_and_engine):
     client, _ = client_and_engine
     resp = client.get("/dashboard")
