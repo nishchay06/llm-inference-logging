@@ -202,5 +202,12 @@ stay on the rung.
             durability: worker down → event waits in the stream → processed on
             restart (HTTP path would have dropped it). Design in `EVENTS_DESIGN.md`.
 
-_Next: remaining bonuses, by curiosity — PII redaction, self-hosted k8s. Core +
-5 of 7 bonuses done (all but PII redaction and k8s)._
+      - [x] **PII redaction** — in-house regex scrubber (`sdk/redaction.py`):
+            emails, phones, Luhn-valid cards, SSNs, IPs, API keys → typed tokens.
+            Applied at the source in the SDK's single `_preview` choke point
+            (before emit + truncation), fail-safe. Verified live on Docker
+            (`[EMAIL]`/`[CARD]` in the stored preview). Design in
+            `REDACTION_DESIGN.md`.
+
+_Next: only self-hosted k8s remains (expensive; Docker already proves
+packaging). Core + 6 of 7 bonuses done._

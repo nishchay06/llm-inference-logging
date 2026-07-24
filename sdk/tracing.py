@@ -6,12 +6,16 @@ from typing import Any, Callable
 
 from .events import InferenceLog
 from .providers import ADAPTERS, ChatResult
+from .redaction import redact
 
 PREVIEW_CHARS = 200
 
 
 def _preview(text: str) -> str:
-    text = text.strip()
+    # Scrub PII on the full text BEFORE truncating (so a value near the cut can't
+    # leak a half-match); this is the single choke point every preview flows
+    # through — input, output, chat, stream, and error branches.
+    text = redact(text.strip())
     return text if len(text) <= PREVIEW_CHARS else text[:PREVIEW_CHARS] + "…"
 
 

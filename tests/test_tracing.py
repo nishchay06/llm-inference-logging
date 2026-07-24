@@ -72,6 +72,22 @@ def test_success_is_captured():
     assert log.error_type is None
 
 
+def test_previews_are_pii_redacted():
+    """PII in the input/output must be scrubbed in the logged previews."""
+    events = []
+    client = FakeClient(response=make_response(text="saved card 4111 1111 1111 1111"))
+    traced = TracedClient(client, provider="anthropic", sink=events.append)
+
+    traced.chat(
+        model="claude-sonnet-5",
+        max_tokens=10,
+        messages=[{"role": "user", "content": "my email is bob@example.com"}],
+    )
+    log = events[0]
+    assert "[EMAIL]" in log.input_preview and "bob@example.com" not in log.input_preview
+    assert "[CARD]" in log.output_preview and "4111" not in log.output_preview
+
+
 def test_error_is_captured_and_reraised():
     events = []
     client = FakeClient(error=ValueError("boom"))

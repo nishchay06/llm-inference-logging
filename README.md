@@ -54,6 +54,9 @@ strategy, scaling considerations, and failure-handling assumptions.
   separate ingestion service. Two transports: a direct HTTP `POST` (default), or
   an **event-based** path (`REDIS_URL` set) — publish to a **Redis Stream**, a
   separate **worker** consumes it — so an ingestion outage no longer loses logs.
+- **PII redaction:** log previews are scrubbed at the source (in the SDK, before
+  emit) — emails, phones, Luhn-valid cards, SSNs, IPs, API keys → typed tokens
+  like `[EMAIL]`. Regex-based, in-house, fail-safe (see `REDACTION_DESIGN.md`).
 - **UI:** a single-page chat with a conversation sidebar — **list** past
   conversations and **resume** any of them. Assistant replies render as markdown;
   a typing indicator shows while awaiting a reply.
@@ -228,9 +231,11 @@ error, and schema is a single-owner concern.
   at high telemetry volume you'd push them into SQL and/or a columnar store
   (ClickHouse) — the OLAP read path real tools use.
 - **Logs store previews, not full payloads:** the log explorer diagnoses from
-  input/output **previews (~200 chars)** + `error_type`/`error_message`, not full
-  request/response bodies — a deliberate storage/privacy tradeoff. Production
-  would store full payloads (with PII redaction) or link to a trace store.
+  input/output **previews (~200 chars, PII-redacted)** + `error_type`/`error_message`,
+  not full request/response bodies — a deliberate storage/privacy tradeoff.
+- **Redaction is regex-only:** it catches structured PII (emails, cards, SSNs,
+  keys…) but not unstructured PII like names/addresses — that's the NER upgrade
+  (e.g. **Microsoft Presidio**); number heuristics can also false-positive.
 - **Hosting/deploy:** there's a one-command `docker compose up` for local dev
   (Postgres + both services); a hosted deployment (e.g. self-managed k8s) is a
   remaining bonus.
