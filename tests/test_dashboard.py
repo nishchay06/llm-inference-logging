@@ -144,6 +144,33 @@ def test_logs_filter_order_and_paginate(client_and_engine):
     assert page["total"] == 5 and len(page["items"]) == 2
 
 
+def test_stats_honors_status_and_provider_filters(client_and_engine):
+    client, engine = client_and_engine
+    _add(engine, status="success", provider="anthropic")
+    _add(engine, status="success", provider="anthropic")
+    _add(engine, status="error", error_type="X", provider="gemini")
+
+    # status filter scopes the overview, not just the stream
+    s = client.get("/stats", params={"status": "error"}).json()
+    assert s["total_calls"] == 1 and s["error_count"] == 1 and s["error_rate"] == 1.0
+    # provider filter too
+    s2 = client.get("/stats", params={"provider": "anthropic"}).json()
+    assert s2["total_calls"] == 2 and s2["error_count"] == 0
+
+
+def test_timeseries_and_by_model_honor_filters(client_and_engine):
+    client, engine = client_and_engine
+    _add(engine, provider="anthropic")
+    _add(engine, provider="gemini")
+    _add(engine, provider="gemini", status="error", error_type="X")
+
+    ts = client.get("/stats/timeseries", params={"provider": "gemini"}).json()
+    assert sum(p["calls"] for p in ts["points"]) == 2
+    bm = client.get("/stats/by_model", params={"status": "error"}).json()
+    assert all(i["provider"] == "gemini" for i in bm["items"])
+    assert sum(i["calls"] for i in bm["items"]) == 1
+
+
 def test_dashboard_page_served(client_and_engine):
     client, _ = client_and_engine
     resp = client.get("/dashboard")

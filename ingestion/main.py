@@ -49,6 +49,35 @@ def _percentile(sorted_vals: list[float], p: float) -> float | None:
     return sorted_vals[min(len(sorted_vals) - 1, max(0, k))]
 
 
+def _log_conditions(
+    *, status=None, provider=None, model=None, session_id=None, q=None, since=None
+):
+    """Shared WHERE conditions for the log query + all the metrics endpoints, so
+    the dashboard's filter bar scopes BOTH planes (charts and the stream)
+    identically. `since` must already be naive-UTC (see _naive_utc)."""
+    conds = []
+    if status:
+        conds.append(InferenceLogRow.status == status)
+    if provider:
+        conds.append(InferenceLogRow.provider == provider)
+    if model:
+        conds.append(InferenceLogRow.model == model)
+    if session_id:
+        conds.append(InferenceLogRow.session_id == session_id)
+    if since is not None:
+        conds.append(InferenceLogRow.started_at >= since)
+    if q:
+        like = f"%{q}%"
+        conds.append(
+            or_(
+                InferenceLogRow.input_preview.ilike(like),
+                InferenceLogRow.output_preview.ilike(like),
+                InferenceLogRow.error_message.ilike(like),
+            )
+        )
+    return conds
+
+
 @app.get("/hello")
 def hello():
     return {"message": "ingestion is up"}
@@ -78,25 +107,32 @@ class StatsOut(BaseModel):
 
 
 @app.get("/stats", response_model=StatsOut)
-def stats(since: datetime | None = None, session: Session = Depends(get_session)):
-    """Latency / throughput / errors over the inference logs. `since` (ISO 8601)
-    optionally windows the query; `started_at` is indexed for it. Counts/avg come
-    from a SQL aggregate; latency percentiles are computed in Python."""
+def stats(
+    status: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    q: str | None = None,
+    since: datetime | None = None,
+    session: Session = Depends(get_session),
+):
+    """Latency / throughput / errors over the (filtered) inference logs. Counts/avg
+    come from a SQL aggregate; latency percentiles are computed in Python. The
+    same filters as /logs apply, so the dashboard's filter bar scopes this too."""
     since = _naive_utc(since)
+    conds = _log_conditions(status=status, provider=provider, model=model, q=q, since=since)
 
-    is_error = case((InferenceLogRow.status != "success", 1), else_=0)
     query = select(
         func.count(),
         func.sum(case((InferenceLogRow.status == "success", 1), else_=0)),
-        func.sum(is_error),
+        func.sum(case((InferenceLogRow.status != "success", 1), else_=0)),
         func.avg(InferenceLogRow.latency_ms),
         func.sum(InferenceLogRow.input_tokens),
         func.sum(InferenceLogRow.output_tokens),
     )
     lat_query = select(InferenceLogRow.latency_ms)
-    if since is not None:
-        query = query.where(InferenceLogRow.started_at >= since)
-        lat_query = lat_query.where(InferenceLogRow.started_at >= since)
+    for c in conds:
+        query = query.where(c)
+        lat_query = lat_query.where(c)
 
     total, success, errors, avg_latency, itok, otok = session.exec(query).one()
     total = total or 0
@@ -131,6 +167,10 @@ class TimeseriesOut(BaseModel):
 
 @app.get("/stats/timeseries", response_model=TimeseriesOut)
 def timeseries(
+    status: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    q: str | None = None,
     since: datetime | None = None,
     bucket: int = 60,
     session: Session = Depends(get_session),
@@ -141,8 +181,8 @@ def timeseries(
     query = select(
         InferenceLogRow.started_at, InferenceLogRow.status, InferenceLogRow.latency_ms
     )
-    if since is not None:
-        query = query.where(InferenceLogRow.started_at >= since)
+    for c in _log_conditions(status=status, provider=provider, model=model, q=q, since=since):
+        query = query.where(c)
 
     buckets: dict[int, dict] = {}
     for started_at, status, lat in session.exec(query).all():
@@ -182,9 +222,16 @@ class ByModelOut(BaseModel):
 
 
 @app.get("/stats/by_model", response_model=ByModelOut)
-def by_model(since: datetime | None = None, session: Session = Depends(get_session)):
+def by_model(
+    status: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    q: str | None = None,
+    since: datetime | None = None,
+    session: Session = Depends(get_session),
+):
     """Per-model breakdown (calls, error rate, avg latency) — shows the
-    multi-provider mix."""
+    multi-provider mix. Honours the same filters as the rest of the dashboard."""
     since = _naive_utc(since)
     query = select(
         InferenceLogRow.model,
@@ -193,8 +240,8 @@ def by_model(since: datetime | None = None, session: Session = Depends(get_sessi
         func.sum(case((InferenceLogRow.status != "success", 1), else_=0)),
         func.avg(InferenceLogRow.latency_ms),
     ).group_by(InferenceLogRow.model, InferenceLogRow.provider)
-    if since is not None:
-        query = query.where(InferenceLogRow.started_at >= since)
+    for c in _log_conditions(status=status, provider=provider, model=model, q=q, since=since):
+        query = query.where(c)
 
     items = []
     for model, provider, calls, errors, avg_lat in session.exec(query).all():
@@ -249,26 +296,9 @@ def query_logs(
     """The log stream for the explorer: filtered, newest-first, paginated.
     Coexists with POST /logs (write) — GET queries, POST ingests."""
     since = _naive_utc(since)
-    conds = []
-    if status:
-        conds.append(InferenceLogRow.status == status)
-    if provider:
-        conds.append(InferenceLogRow.provider == provider)
-    if model:
-        conds.append(InferenceLogRow.model == model)
-    if session_id:
-        conds.append(InferenceLogRow.session_id == session_id)
-    if since is not None:
-        conds.append(InferenceLogRow.started_at >= since)
-    if q:
-        like = f"%{q}%"
-        conds.append(
-            or_(
-                InferenceLogRow.input_preview.ilike(like),
-                InferenceLogRow.output_preview.ilike(like),
-                InferenceLogRow.error_message.ilike(like),
-            )
-        )
+    conds = _log_conditions(
+        status=status, provider=provider, model=model, session_id=session_id, q=q, since=since
+    )
 
     count_q = select(func.count()).select_from(InferenceLogRow)
     rows_q = select(InferenceLogRow)

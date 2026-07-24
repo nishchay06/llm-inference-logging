@@ -168,8 +168,10 @@ in, switch providers, and list/resume past conversations from the sidebar.
 |---|---|
 | ![Chat with a markdown-rendered reply and the provider selector](docs/screenshots/chat.png) | ![Streaming mid-reply with the Cancel button](docs/screenshots/streaming.png) |
 | **Chat** — markdown reply + provider dropdown | **Streaming** — live tokens + Cancel |
-| ![Conversation sidebar listing past chats, one resumed](docs/screenshots/conversations.png) | ![Stats endpoint aggregating latency, throughput and errors](docs/screenshots/stats.png) |
-| **List + resume** conversations | **Stats** — latency / throughput / errors |
+| ![Conversation sidebar listing past chats, one resumed](docs/screenshots/conversations.png) | ![Dashboard overview — KPI cards, throughput and latency charts](docs/screenshots/dashboard-overview.png) |
+| **List + resume** conversations | **Dashboard** — KPIs + throughput/latency charts |
+| ![Log explorer — filterable, color-coded log stream](docs/screenshots/dashboard-logs.png) | |
+| **Log explorer** — status-coded stream, click to expand | |
 
 ## Schema design decisions
 
