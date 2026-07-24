@@ -17,7 +17,10 @@ Keeping these separate is what makes every later rung a *swap*, not a rewrite:
 - Rung 4 (ingestion) = swap the **sink** (`print` → HTTP POST).
 - Rung 5 (safe logging) = make the **sink** non-blocking/failure-safe.
 - Multi-provider (bonus) = add a **schema** adapter per provider → same `InferenceLog`.
-- Auto-instrument (bonus) = apply the **same** capture logic via monkey-patch.
+- Auto-instrument (bonus, **built**) = apply the **same** capture logic via
+  monkey-patch — `sdk/instrument.py`, `instrument(client, provider, sink)`.
+  Reuses the adapters + `InferenceLog` + sink; only the *mechanism* differs
+  (patch vs wrap). See `AUTOINSTRUMENT_DESIGN.md`.
 
 ### Multi-provider (built) — `sdk/providers.py`
 

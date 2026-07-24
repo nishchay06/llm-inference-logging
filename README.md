@@ -43,7 +43,10 @@ strategy, scaling considerations, and failure-handling assumptions.
   persisted to Postgres (survives restarts).
 - **Auto-instrumenting SDK:** a transparent `TracedClient` wrapper captures
   model, provider, latency, tokens, status/errors, timestamps, session ID, and
-  input/output previews — chat code carries zero logging concerns.
+  input/output previews — chat code carries zero logging concerns. A **zero-touch
+  monkey-patch layer** (`instrument()`, see `AUTOINSTRUMENT_DESIGN.md`) is also
+  available: it patches the provider SDK so even a plain, un-wrapped
+  `client.messages.create(...)` is captured — no call-site change at all.
 - **Multi-provider:** Anthropic and Google Gemini, switchable **per request from
   a UI dropdown** (or via `LLM_PROVIDER`/`LLM_MODEL` for the default). Only
   providers with a configured key are offered. Since history is provider-agnostic
@@ -216,10 +219,12 @@ error, and schema is a single-owner concern.
   (they replay from the stream). The remaining gap is the in-process `QueueSink`
   buffer — a chatbot crash before `XADD` loses those few events; a synchronous
   durable write would block the chat, so we don't.
-- **Explicit wrapper, not true auto-instrument:** capture is a transparent
-  `TracedClient`. A **monkey-patch / OTel instrumentor** (aligned to the
-  OpenTelemetry GenAI semantic conventions) would make instrumentation
-  zero-touch. A **proxy** approach (à la Helicone) is the other option.
+- **Auto-instrumentation is opt-in, not the app default:** both a transparent
+  `TracedClient` wrapper *and* a zero-touch monkey-patch layer
+  (`sdk/instrument.py`) exist; the app uses the wrapper on purpose (normalized
+  `ChatResult` + streaming). Aligning the patch to the **OpenTelemetry GenAI
+  semantic conventions**, or a **proxy** approach (à la Helicone), would be the
+  next steps.
 - **Provider coverage:** Anthropic + Gemini are wired via adapters; adding
   another (OpenAI, etc.) is one more adapter. A library like **litellm** would
   replace the hand-rolled adapters in production.

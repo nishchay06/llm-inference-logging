@@ -209,5 +209,15 @@ stay on the rung.
             (`[EMAIL]`/`[CARD]` in the stored preview). Design in
             `REDACTION_DESIGN.md`.
 
-_Next: only self-hosted k8s remains (expensive; Docker already proves
-packaging). Core + 6 of 7 bonuses done._
+      - [x] **True auto-instrumentation** — `sdk/instrument.py`: a monkey-patch
+            layer (`instrument(client, provider, sink)`) so a plain, un-wrapped
+            `client.messages.create(...)` is captured with zero call-site change
+            (ambient `session_scope` for the id). Reuses the adapters / InferenceLog
+            / sink / redaction; idempotent; observes-only (returns the raw
+            response). The app keeps the explicit wrapper by choice. Directly
+            addresses the assignment's capitalized AUTO-INSTRUMENT. Design in
+            `AUTOINSTRUMENT_DESIGN.md`.
+
+_Next: only self-hosted k8s remains of the named bonus list (expensive; Docker
+already proves packaging). Core + all other bonuses done, plus true
+auto-instrumentation (the assignment's headline emphasis)._
