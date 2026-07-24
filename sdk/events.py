@@ -26,6 +26,7 @@ class InferenceLog(BaseModel):
     started_at: datetime
     ended_at: datetime
     latency_ms: float
+    ttft_ms: float | None = None  # time to first token — streaming only
 
     # Usage (null on error, since no response came back)
     input_tokens: int | None = None

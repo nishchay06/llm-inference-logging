@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -132,50 +133,91 @@ def _trim_to_user_start(window: list[dict]) -> list[dict]:
     return window
 
 
-@app.post("/chat")
-def chat(payload: ChatRequest):
-    # Resolve the provider up front — before any DB write or LLM call — so an
-    # unavailable provider fails fast and cleanly.
+def _resolve_provider(payload: ChatRequest):
+    """Pick the provider (default if unspecified); 400 if it isn't available.
+    Runs before any DB write or LLM call so failures are fast and clean."""
     provider = payload.provider or DEFAULT_PROVIDER
     if provider not in TRACED:
         raise HTTPException(status_code=400, detail=f"provider {provider!r} not available")
-    traced = TRACED[provider]
-    model = MODEL_FOR[provider]
+    return provider, TRACED[provider], MODEL_FOR[provider]
 
-    session_id = payload.session_id or str(uuid.uuid4())
 
+def _record_user_message(session_id: str, message: str) -> list[dict]:
+    """Upsert the conversation, store the user message, and return the context
+    window (last N messages). History lives in Postgres, not process RAM."""
     with Session(engine) as db:
-        # Upsert the conversation and record the user's message. Conversation
-        # history now lives in Postgres, not process RAM (Rung 2's in-memory
-        # dict is retired — it survives restarts and is shared across processes).
         if db.get(Conversation, session_id) is None:
             db.add(Conversation(session_id=session_id))
-        db.add(Message(session_id=session_id, role="user", content=payload.message))
+        db.add(Message(session_id=session_id, role="user", content=message))
         db.commit()
-
-        # Build the context window from the last N messages for this session.
         recent = db.exec(
             select(Message)
             .where(Message.session_id == session_id)
             .order_by(Message.id.desc())
             .limit(MAX_CONTEXT_MESSAGES)
         ).all()
-        window = _trim_to_user_start(
+        return _trim_to_user_start(
             [{"role": m.role, "content": m.content} for m in reversed(recent)]
         )
 
-        result = traced.chat(
-            model=model, max_tokens=1024, messages=window, session_id=session_id
-        )
-        reply = result.text
 
-        db.add(Message(session_id=session_id, role="assistant", content=reply))
+def _record_assistant_message(session_id: str, content: str) -> None:
+    """Store the assistant reply (full, or partial on cancel) and bump the
+    conversation's updated_at."""
+    with Session(engine) as db:
+        db.add(Message(session_id=session_id, role="assistant", content=content))
         conv = db.get(Conversation, session_id)
-        conv.updated_at = datetime.now(timezone.utc)
-        db.add(conv)
+        if conv is not None:
+            conv.updated_at = datetime.now(timezone.utc)
+            db.add(conv)
         db.commit()
 
+
+@app.post("/chat")
+def chat(payload: ChatRequest):
+    _, traced, model = _resolve_provider(payload)
+    session_id = payload.session_id or str(uuid.uuid4())
+
+    window = _record_user_message(session_id, payload.message)
+    reply = traced.chat(
+        model=model, max_tokens=1024, messages=window, session_id=session_id
+    ).text
+    _record_assistant_message(session_id, reply)
+
     return {"reply": reply, "session_id": session_id}
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
+@app.post("/chat/stream")
+def chat_stream(payload: ChatRequest):
+    provider, traced, model = _resolve_provider(payload)
+    session_id = payload.session_id or str(uuid.uuid4())
+    window = _record_user_message(session_id, payload.message)
+
+    def event_stream():
+        parts: list[str] = []
+        stream_gen = traced.stream(
+            model=model, max_tokens=1024, messages=window, session_id=session_id
+        )
+        try:
+            yield _sse({"type": "start", "session_id": session_id, "provider": provider, "model": model})
+            for delta in stream_gen:
+                parts.append(delta)
+                yield _sse({"type": "delta", "text": delta})
+            yield _sse({"type": "done", "session_id": session_id})
+        except Exception as exc:  # provider/stream error mid-flight
+            yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            # Close the wrapper (emits the success/cancelled/error log) and
+            # persist whatever text was produced — full, or partial on cancel.
+            stream_gen.close()
+            if parts:
+                _record_assistant_message(session_id, "".join(parts))
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/conversations", response_model=list[ConversationSummary])

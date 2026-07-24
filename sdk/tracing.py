@@ -104,3 +104,89 @@ class TracedClient:
             )
         )
         return parsed
+
+    def stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ):
+        """Streaming twin of `chat()`. Tees the provider's text deltas to the
+        caller while accumulating them, and emits exactly one InferenceLog when
+        the stream ends — success on completion, `cancelled` if the consumer
+        closes the generator (client disconnect), `error` on failure. TTFT is
+        recorded on the first delta."""
+        started_at = datetime.now(timezone.utc)
+        start = time.perf_counter()
+
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+        )
+        input_preview = _preview(
+            last_user if isinstance(last_user, str) else str(last_user)
+        )
+
+        gen = self._adapter.stream(
+            self._client,
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        chunks: list[str] = []
+        ttft_ms: float | None = None
+
+        def _log(**fields) -> None:
+            self._sink(
+                InferenceLog(
+                    session_id=session_id,
+                    provider=self._provider,
+                    started_at=started_at,
+                    ended_at=datetime.now(timezone.utc),
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    ttft_ms=ttft_ms,
+                    input_preview=input_preview,
+                    **fields,
+                )
+            )
+
+        try:
+            while True:
+                try:
+                    delta = next(gen)
+                except StopIteration as stop:
+                    parsed: ChatResult = stop.value
+                    break
+                if ttft_ms is None:
+                    ttft_ms = (time.perf_counter() - start) * 1000
+                chunks.append(delta)
+                yield delta
+
+            _log(
+                model=(parsed.model if parsed else None) or model,
+                status="success",
+                input_tokens=parsed.input_tokens if parsed else None,
+                output_tokens=parsed.output_tokens if parsed else None,
+                output_preview=_preview((parsed.text if parsed else "") or "".join(chunks)),
+            )
+        except GeneratorExit:
+            # Consumer stopped iterating (client disconnected / cancelled).
+            _log(
+                model=model,
+                status="cancelled",
+                output_preview=_preview("".join(chunks)),
+            )
+            raise
+        except Exception as exc:
+            _log(
+                model=model,
+                status="error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        finally:
+            gen.close()

@@ -47,6 +47,26 @@ class AnthropicAdapter:
             raw=response,
         )
 
+    def stream(self, client, *, model, messages, max_tokens, **kwargs):
+        """Yield text deltas, then `return` a ChatResult with usage from the
+        final message. Uses the SDK's stream helper (text_stream + the final
+        aggregated message)."""
+        parts: list[str] = []
+        with client.messages.stream(
+            model=model, messages=messages, max_tokens=max_tokens, **kwargs
+        ) as stream:
+            for delta in stream.text_stream:
+                parts.append(delta)
+                yield delta
+            final = stream.get_final_message()
+        return ChatResult(
+            text="".join(parts),
+            model=getattr(final, "model", None),
+            input_tokens=final.usage.input_tokens,
+            output_tokens=final.usage.output_tokens,
+            raw=final,
+        )
+
 
 class GeminiAdapter:
     provider = "gemini"
@@ -73,6 +93,38 @@ class GeminiAdapter:
             input_tokens=getattr(usage, "prompt_token_count", None),
             output_tokens=getattr(usage, "candidates_token_count", None),
             raw=response,
+        )
+
+    def stream(self, client, *, model, messages, max_tokens, **kwargs):
+        """Yield text deltas from the streaming chunks; usage_metadata arrives on
+        the final chunk(s), model in model_version."""
+        from google.genai import types
+
+        config = types.GenerateContentConfig(max_output_tokens=max_tokens)
+        parts: list[str] = []
+        model_version = None
+        input_tokens = output_tokens = None
+        for chunk in client.models.generate_content_stream(
+            model=model,
+            contents=_to_gemini_contents(messages),
+            config=config,
+            **kwargs,
+        ):
+            text = getattr(chunk, "text", None)
+            if text:
+                parts.append(text)
+                yield text
+            model_version = getattr(chunk, "model_version", None) or model_version
+            usage = getattr(chunk, "usage_metadata", None)
+            if usage is not None:
+                input_tokens = getattr(usage, "prompt_token_count", None)
+                output_tokens = getattr(usage, "candidates_token_count", None)
+        return ChatResult(
+            text="".join(parts),
+            model=model_version,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            raw=None,
         )
 
 

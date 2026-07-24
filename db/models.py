@@ -58,6 +58,7 @@ class InferenceLogRow(SQLModel, table=True):
     started_at: datetime = Field(index=True)
     ended_at: datetime
     latency_ms: float
+    ttft_ms: float | None = None  # time to first token — streaming only
     input_tokens: int | None = None
     output_tokens: int | None = None
     input_preview: str | None = None

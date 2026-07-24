@@ -27,3 +27,9 @@ def test_chat_rejects_unknown_provider():
     # "openai" is not a registered provider → rejected before any DB/LLM work.
     resp = client.post("/chat", json={"message": "hi", "provider": "openai"})
     assert resp.status_code == 400
+
+
+def test_chat_stream_rejects_unknown_provider():
+    client = TestClient(app)
+    resp = client.post("/chat/stream", json={"message": "hi", "provider": "openai"})
+    assert resp.status_code == 400
