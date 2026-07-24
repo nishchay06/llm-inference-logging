@@ -3,7 +3,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -14,6 +13,7 @@ from sqlmodel import Session, select
 
 from db.engine import engine, get_session
 from db.models import Conversation, Message
+from sdk.providers import DEFAULT_MODELS, build_client
 from sdk.sinks import HttpSink, QueueSink
 from sdk.tracing import TracedClient
 
@@ -26,14 +26,16 @@ app = FastAPI(title="Chatbot — Rung 6")
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
 
-# The raw provider client, wrapped so every call is instrumented; the sink
-# enqueues each log and a background thread ships it to ingestion.
-client = Anthropic()
+# Provider is chosen by env (LLM_PROVIDER / LLM_MODEL) — swap Anthropic ↔ Gemini
+# with no code change. The raw client is wrapped so every call is instrumented;
+# the sink enqueues each log and a background thread ships it to ingestion.
+PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
+MODEL = os.getenv("LLM_MODEL") or DEFAULT_MODELS[PROVIDER]
+client = build_client(PROVIDER)
 traced = TracedClient(
-    client, provider="anthropic", sink=QueueSink(HttpSink(INGESTION_URL))
+    client, provider=PROVIDER, sink=QueueSink(HttpSink(INGESTION_URL))
 )
 
-MODEL = "claude-sonnet-5"
 MAX_CONTEXT_MESSAGES = 10
 
 
@@ -120,10 +122,10 @@ def chat(payload: ChatRequest):
             [{"role": m.role, "content": m.content} for m in reversed(recent)]
         )
 
-        response = traced.chat(
+        result = traced.chat(
             model=MODEL, max_tokens=1024, messages=window, session_id=session_id
         )
-        reply = next((b.text for b in response.content if b.type == "text"), "")
+        reply = result.text
 
         db.add(Message(session_id=session_id, role="assistant", content=reply))
         conv = db.get(Conversation, session_id)

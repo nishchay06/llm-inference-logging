@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 anthropic
+google-genai
 python-dotenv
 httpx
 sqlmodel

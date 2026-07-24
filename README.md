@@ -6,8 +6,8 @@ persisted for observability. Built slowly and steadily as a learning project;
 see [`LEARNING_PLAN.md`](./LEARNING_PLAN.md) for the rung-by-rung roadmap and
 [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the architecture notes.
 
-**Stack:** FastAPI (Python) · Anthropic (Claude) · Postgres + SQLModel · plain
-HTML/JS UI (no framework, on purpose — every layer stays visible).
+**Stack:** FastAPI (Python) · Anthropic (Claude) / Google (Gemini) · Postgres +
+SQLModel · plain HTML/JS UI (no framework, on purpose — every layer stays visible).
 
 ## Architecture overview
 
@@ -44,6 +44,10 @@ strategy, scaling considerations, and failure-handling assumptions.
 - **Auto-instrumenting SDK:** a transparent `TracedClient` wrapper captures
   model, provider, latency, tokens, status/errors, timestamps, session ID, and
   input/output previews — chat code carries zero logging concerns.
+- **Multi-provider:** Anthropic and Google Gemini, selected by env
+  (`LLM_PROVIDER` / `LLM_MODEL`) with no code change. Each provider's quirks live
+  in a small adapter (`sdk/providers.py`); the wrapper returns a normalized
+  result, so the chat code is provider-agnostic.
 - **Near-real-time ingestion:** non-blocking, failure-safe log shipping to a
   separate ingestion service that validates and stores each log.
 - **UI:** a single-page chat with a conversation sidebar — **list** past
@@ -102,6 +106,15 @@ Then open **http://localhost:8000** for the chat UI. The chatbot persists
 conversations and messages to Postgres and ships each inference log to the
 ingestion service (`INGESTION_URL`, default `http://127.0.0.1:8001/logs`), which
 stores it in `inference_logs`.
+
+### Switching providers
+
+Default is Anthropic. To use Gemini, set a key and the env vars — no code change:
+
+```bash
+GEMINI_API_KEY=...    # in .env; get one at https://aistudio.google.com/apikey
+LLM_PROVIDER=gemini uvicorn app.main:app --port 8000   # LLM_MODEL optional (default gemini-2.0-flash)
+```
 
 ## Endpoints
 
@@ -182,8 +195,9 @@ error, and schema is a single-owner concern.
   `TracedClient`. A **monkey-patch / OTel instrumentor** (aligned to the
   OpenTelemetry GenAI semantic conventions) would make instrumentation
   zero-touch. A **proxy** approach (à la Helicone) is the other option.
-- **Single provider:** the wrapper is provider-agnostic by design;
-  **multi-provider** is a per-provider response adapter → same `InferenceLog`.
+- **Provider coverage:** Anthropic + Gemini are wired via adapters; adding
+  another (OpenAI, etc.) is one more adapter. A library like **litellm** would
+  replace the hand-rolled adapters in production.
 - **UI markdown is not sanitized:** assistant output is rendered via `marked`
   into `innerHTML`. Safe here (our own model's output), but production would run
   it through a sanitizer like **DOMPurify**.

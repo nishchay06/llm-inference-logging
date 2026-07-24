@@ -19,6 +19,28 @@ Keeping these separate is what makes every later rung a *swap*, not a rewrite:
 - Multi-provider (bonus) = add a **schema** adapter per provider → same `InferenceLog`.
 - Auto-instrument (bonus) = apply the **same** capture logic via monkey-patch.
 
+### Multi-provider (built) — `sdk/providers.py`
+
+A per-provider **adapter** isolates the two things that differ between
+providers, behind a uniform interface:
+
+- `create(client, model, messages, max_tokens, **kwargs)` — how to CALL it.
+- `parse(response) -> ChatResult` — how to READ it into normalized fields.
+
+`AnthropicAdapter` and `GeminiAdapter` are registered in `ADAPTERS`; a
+`build_client(provider)` factory constructs the right SDK client (lazily
+imported). `TracedClient` keeps its signature (`provider=` string), resolves the
+adapter, and returns a normalized **`ChatResult`** — so the chat code reads
+`traced.chat(...).text` and never sees a provider-specific response shape.
+Provider/model are env-driven (`LLM_PROVIDER` / `LLM_MODEL`).
+
+Gemini is the interesting case: roles are user/**model**, content is wrapped in
+`parts`, max tokens goes through a config object, usage fields are
+`prompt/candidates_token_count`, and the served model comes back in
+`model_version` (requesting `gemini-flash-latest` logs the resolved
+`gemini-3.6-flash`). The adapter absorbs all of that; the wrapper is untouched.
+(In production, a library like `litellm` does this normalization for you.)
+
 ## Package layout
 
 ```

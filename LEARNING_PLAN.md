@@ -171,8 +171,14 @@ stay on the rung.
       - [x] **Docker Compose one-command setup** — `Dockerfile` + `.dockerignore`
             + `docker-compose.yml` at the repo root: `docker compose up --build`
             brings up Postgres + a one-shot `db-init` (single-owner schema) +
-            ingestion + chatbot, wired by service name. (Written without Docker
-            on this machine → YAML/graph validated here; run to fully verify.)
+            ingestion + chatbot, wired by service name. Verified end-to-end on
+            colima (a live /chat persisted to the container Postgres).
+      - [x] **Multi-provider** — Anthropic + Google Gemini via per-provider
+            adapters (`sdk/providers.py`); env-driven (`LLM_PROVIDER`/`LLM_MODEL`),
+            `TracedClient` returns a normalized `ChatResult` so chat code is
+            provider-agnostic. Gemini verified live (message-format translation,
+            config max_output_tokens, `usage_metadata` + `model_version` parse).
+            Design in `sdk/DESIGN.md`.
 
 _Next: remaining bonuses, by curiosity. Multi-provider (falls out of the clean
 wrapper), streaming responses (which also unlocks the deferred "cancel a
