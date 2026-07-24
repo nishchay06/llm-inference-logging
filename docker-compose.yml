@@ -1,0 +1,67 @@
+# One-command local stack: Postgres + both FastAPI services.
+#
+#   docker compose up --build
+#
+# Reads ANTHROPIC_API_KEY from a .env file next to this one (compose picks it
+# up automatically for ${...} interpolation). Then open http://localhost:8000.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: chatbot
+      POSTGRES_PASSWORD: chatbot
+      POSTGRES_DB: chatbot
+    ports:
+      - "5432:5432" # exposed so you can psql from the host if you want
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: create the schema once, then exit. Both app services wait for it
+  # to finish — a single owner does the DDL, mirroring the `python -m db.init`
+  # step and avoiding two services racing to CREATE TABLE on boot.
+  db-init:
+    build: .
+    image: chatbot-app:latest
+    command: python -m db.init
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ingestion:
+    image: chatbot-app:latest
+    build: .
+    command: uvicorn ingestion.main:app --host 0.0.0.0 --port 8001
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
+    ports:
+      - "8001:8001"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+
+  chatbot:
+    image: chatbot-app:latest
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
+      INGESTION_URL: http://ingestion:8001/logs
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY in a .env file}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      ingestion:
+        condition: service_started
+
+volumes:
+  pgdata:

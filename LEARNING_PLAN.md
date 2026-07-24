@@ -167,11 +167,16 @@ stay on the rung.
             "expose a simple UI" + the named list/resume behaviours. Verified in
             the browser end-to-end; every reply logged (6 logs = 6 replies, 0
             dropped) through the async QueueSink.
-- [ ] Rung 8 (bonuses)
+- [~] Rung 8 (bonuses)
+      - [x] **Docker Compose one-command setup** — `Dockerfile` + `.dockerignore`
+            + `docker-compose.yml` at the repo root: `docker compose up --build`
+            brings up Postgres + a one-shot `db-init` (single-owner schema) +
+            ingestion + chatbot, wired by service name. (Written without Docker
+            on this machine → YAML/graph validated here; run to fully verify.)
 
-_Next: Rung 8 bonuses, by curiosity. Highest impact-per-hour: Docker Compose
-one-command setup, multi-provider (falls out of the clean wrapper), streaming
-responses (which also unlocks the deferred "cancel a conversation" UI). The
-/stats endpoint is the seed of the "Latency + Throughput + Errors dashboards"
-bonus. "Cancel a conversation" (the 3rd UI behaviour) is still deferred — it's
-aborting an in-flight response, so it pairs with streaming._
+_Next: remaining bonuses, by curiosity. Multi-provider (falls out of the clean
+wrapper), streaming responses (which also unlocks the deferred "cancel a
+conversation" UI), and a dashboard UI over `/stats` (the seed of the "Latency +
+Throughput + Errors dashboards" bonus). "Cancel a conversation" (the 3rd UI
+behaviour) is still deferred — it's aborting an in-flight response, so it pairs
+with streaming._

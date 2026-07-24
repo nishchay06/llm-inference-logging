@@ -1,0 +1,11 @@
+# Keep the build context (and image) small, and never bake secrets in.
+.venv/
+.git/
+.gitignore
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.handoff/
+*.log
+pgdata*/

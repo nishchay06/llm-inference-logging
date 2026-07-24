@@ -52,10 +52,27 @@ strategy, scaling considerations, and failure-handling assumptions.
 - **Stats:** `GET /stats` aggregates latency / throughput / errors over the logs
   (the seed of a dashboard).
 
-## Setup
+## Quick start with Docker (recommended)
+
+One command brings up Postgres + both services (schema is created automatically
+by a one-shot `db-init` step):
+
+```bash
+cp .env.example .env        # then edit .env: paste your ANTHROPIC_API_KEY
+docker compose up --build
+```
+
+Then open **http://localhost:8000**. Inside Compose the services find each other
+by name — `DATABASE_URL` and `INGESTION_URL` are set for you; only
+`ANTHROPIC_API_KEY` is read from your `.env`. Stop with `Ctrl-C`; `docker compose
+down` removes the containers (add `-v` to also drop the Postgres volume).
+
+Get an API key at https://console.anthropic.com/ (Settings → API Keys).
+
+## Manual setup (without Docker)
 
 Prerequisites: Python 3.11+ and a running **Postgres** server (any local
-Postgres works; a Docker Compose one-command setup is a planned bonus).
+Postgres works).
 
 ```bash
 python3 -m venv .venv
@@ -68,12 +85,10 @@ createdb chatbot            # create the database (if it doesn't exist)
 python -m db.init           # create the tables (one-time)
 ```
 
-Get an API key at https://console.anthropic.com/ (Settings → API Keys).
 `DATABASE_URL` defaults to `postgresql+psycopg://<your-os-user>@localhost:5432/chatbot`.
 
-## Run
-
-Two services, in two terminals (both from the project root, venv activated):
+Then run the two services in two terminals (both from the project root, venv
+activated):
 
 ```bash
 # terminal 1 — ingestion service
@@ -176,5 +191,6 @@ error, and schema is a single-owner concern.
   time-bucketed series and per-model grouping are the natural next step.
 - **No streaming yet:** streaming responses (and a **cancel** button for
   in-flight requests) are a bonus.
-- **No Docker Compose yet:** a one-command `docker-compose up` for Postgres +
-  both services would simplify setup and hosting.
+- **Hosting/deploy:** there's a one-command `docker compose up` for local dev
+  (Postgres + both services); a hosted deployment (e.g. self-managed k8s) is a
+  remaining bonus.
