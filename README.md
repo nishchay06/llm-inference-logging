@@ -155,9 +155,15 @@ testability go together.
 
 ## Demo
 
-_Screenshots / Loom to be added._ Open http://localhost:8000 to try it: send a
-message, watch the typing indicator and markdown-rendered reply, then use the
-sidebar to list and resume conversations.
+The chat UI at http://localhost:8000 — send a message and watch the reply stream
+in, switch providers, and list/resume past conversations from the sidebar.
+
+| | |
+|---|---|
+| ![Chat with a markdown-rendered reply and the provider selector](docs/screenshots/chat.png) | ![Streaming mid-reply with the Cancel button](docs/screenshots/streaming.png) |
+| **Chat** — markdown reply + provider dropdown | **Streaming** — live tokens + Cancel |
+| ![Conversation sidebar listing past chats, one resumed](docs/screenshots/conversations.png) | ![Stats endpoint aggregating latency, throughput and errors](docs/screenshots/stats.png) |
+| **List + resume** conversations | **Stats** — latency / throughput / errors |
 
 ## Schema design decisions
 
