@@ -174,11 +174,12 @@ stay on the rung.
             ingestion + chatbot, wired by service name. Verified end-to-end on
             colima (a live /chat persisted to the container Postgres).
       - [x] **Multi-provider** — Anthropic + Google Gemini via per-provider
-            adapters (`sdk/providers.py`); env-driven (`LLM_PROVIDER`/`LLM_MODEL`),
-            `TracedClient` returns a normalized `ChatResult` so chat code is
-            provider-agnostic. Gemini verified live (message-format translation,
-            config max_output_tokens, `usage_metadata` + `model_version` parse).
-            Design in `sdk/DESIGN.md`.
+            adapters (`sdk/providers.py`); `TracedClient` returns a normalized
+            `ChatResult` so chat code is provider-agnostic. Switchable **per
+            request from a UI dropdown** (`GET /providers` lists those with a
+            key); default via `LLM_PROVIDER`/`LLM_MODEL`. Verified live including
+            switching provider mid-conversation (Gemini recalled a name Claude
+            set — history is provider-agnostic). Design in `sdk/DESIGN.md`.
 
 _Next: remaining bonuses, by curiosity. Multi-provider (falls out of the clean
 wrapper), streaming responses (which also unlocks the deferred "cancel a

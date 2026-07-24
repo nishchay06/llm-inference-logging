@@ -91,9 +91,12 @@ ADAPTERS = {
 }
 
 # Sensible default model per provider (overridable via LLM_MODEL).
+# gemini-flash-latest tracks the current flash model (resolves to e.g.
+# gemini-3.6-flash) and has broader free-tier availability than the pinned
+# gemini-2.0-flash.
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-flash-latest",
 }
 
 

@@ -50,6 +50,7 @@
     @keyframes blink { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
     #placeholder { margin: auto; color: var(--muted); }
     #composer { display: flex; gap: 8px; padding: 14px; border-top: 1px solid var(--bd); background: #fff; }
+    #provider { padding: 10px 8px; border: 1px solid var(--bd); border-radius: 8px; font: inherit; background: #fff; cursor: pointer; }
     #input { flex: 1; padding: 10px 12px; border: 1px solid var(--bd); border-radius: 8px; font: inherit; }
     #send { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font: inherit; }
     #send:disabled { opacity: .5; cursor: default; }
@@ -68,6 +69,7 @@
     <main id="chat">
       <div id="messages"><div id="placeholder">Start a new conversation, or pick one on the left.</div></div>
       <form id="composer">
+        <select id="provider" title="Model provider"></select>
         <input id="input" placeholder="Type a message…" autocomplete="off" autofocus />
         <button id="send" type="submit">Send</button>
       </form>
@@ -84,6 +86,21 @@
     const $convList = document.getElementById("conversations");
     const $input = document.getElementById("input");
     const $send = document.getElementById("send");
+    const $provider = document.getElementById("provider");
+
+    async function loadProviders() {
+      const data = await (await fetch("/providers")).json();
+      $provider.innerHTML = "";
+      for (const p of data.providers) {
+        const opt = document.createElement("option");
+        opt.value = p.name;
+        opt.textContent = p.name + " (" + p.model + ")";
+        if (p.name === data.default) opt.selected = true;
+        $provider.appendChild(opt);
+      }
+      // Nothing to switch if there's only one provider.
+      $provider.style.display = data.providers.length > 1 ? "" : "none";
+    }
 
     function addMessage(role, content) {
       document.getElementById("placeholder")?.remove();
@@ -165,7 +182,11 @@
         const resp = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, session_id: sessionId }),
+          body: JSON.stringify({
+            message: text,
+            session_id: sessionId,
+            provider: $provider.value || null,
+          }),
         });
         const data = await resp.json();
         sessionId = data.session_id; // adopt the id the server assigned
@@ -190,6 +211,7 @@
     });
     document.getElementById("new-chat").addEventListener("click", newChat);
 
+    loadProviders();
     loadConversations();
   </script>
 </body>

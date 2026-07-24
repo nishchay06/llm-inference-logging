@@ -26,15 +26,29 @@ app = FastAPI(title="Chatbot — Rung 6")
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
 
-# Provider is chosen by env (LLM_PROVIDER / LLM_MODEL) — swap Anthropic ↔ Gemini
-# with no code change. The raw client is wrapped so every call is instrumented;
-# the sink enqueues each log and a background thread ships it to ingestion.
-PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
-MODEL = os.getenv("LLM_MODEL") or DEFAULT_MODELS[PROVIDER]
-client = build_client(PROVIDER)
-traced = TracedClient(
-    client, provider=PROVIDER, sink=QueueSink(HttpSink(INGESTION_URL))
-)
+# Build a wrapped client for every provider whose API key is configured, so the
+# UI can switch providers per request. They share one QueueSink (one background
+# shipper). A provider with no key is simply skipped, not offered.
+_sink = QueueSink(HttpSink(INGESTION_URL))
+TRACED: dict[str, TracedClient] = {}
+MODEL_FOR: dict[str, str] = {}
+for _provider in DEFAULT_MODELS:
+    try:
+        TRACED[_provider] = TracedClient(
+            build_client(_provider), provider=_provider, sink=_sink
+        )
+        MODEL_FOR[_provider] = DEFAULT_MODELS[_provider]
+    except Exception:
+        # provider not configured (e.g. missing key) — leave it out
+        pass
+
+# Default provider from env, falling back to whatever is available. LLM_MODEL (if
+# set) overrides the model for the default provider only.
+DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
+if DEFAULT_PROVIDER not in TRACED:
+    DEFAULT_PROVIDER = next(iter(TRACED), "")
+if os.getenv("LLM_MODEL") and DEFAULT_PROVIDER in MODEL_FOR:
+    MODEL_FOR[DEFAULT_PROVIDER] = os.environ["LLM_MODEL"]
 
 MAX_CONTEXT_MESSAGES = 10
 
@@ -60,6 +74,26 @@ def hello():
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+    provider: str | None = None  # optional; defaults to DEFAULT_PROVIDER
+
+
+class ProviderInfo(BaseModel):
+    name: str
+    model: str
+
+
+class ProvidersOut(BaseModel):
+    providers: list[ProviderInfo]
+    default: str
+
+
+@app.get("/providers", response_model=ProvidersOut)
+def providers():
+    """Which providers the UI can offer (only those with a key configured)."""
+    return ProvidersOut(
+        providers=[ProviderInfo(name=p, model=MODEL_FOR[p]) for p in TRACED],
+        default=DEFAULT_PROVIDER,
+    )
 
 
 # Read-side wire models — the read contract, kept separate from the SQLModel
@@ -100,6 +134,14 @@ def _trim_to_user_start(window: list[dict]) -> list[dict]:
 
 @app.post("/chat")
 def chat(payload: ChatRequest):
+    # Resolve the provider up front — before any DB write or LLM call — so an
+    # unavailable provider fails fast and cleanly.
+    provider = payload.provider or DEFAULT_PROVIDER
+    if provider not in TRACED:
+        raise HTTPException(status_code=400, detail=f"provider {provider!r} not available")
+    traced = TRACED[provider]
+    model = MODEL_FOR[provider]
+
     session_id = payload.session_id or str(uuid.uuid4())
 
     with Session(engine) as db:
@@ -123,7 +165,7 @@ def chat(payload: ChatRequest):
         )
 
         result = traced.chat(
-            model=MODEL, max_tokens=1024, messages=window, session_id=session_id
+            model=model, max_tokens=1024, messages=window, session_id=session_id
         )
         reply = result.text
 

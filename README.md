@@ -44,10 +44,12 @@ strategy, scaling considerations, and failure-handling assumptions.
 - **Auto-instrumenting SDK:** a transparent `TracedClient` wrapper captures
   model, provider, latency, tokens, status/errors, timestamps, session ID, and
   input/output previews — chat code carries zero logging concerns.
-- **Multi-provider:** Anthropic and Google Gemini, selected by env
-  (`LLM_PROVIDER` / `LLM_MODEL`) with no code change. Each provider's quirks live
-  in a small adapter (`sdk/providers.py`); the wrapper returns a normalized
-  result, so the chat code is provider-agnostic.
+- **Multi-provider:** Anthropic and Google Gemini, switchable **per request from
+  a UI dropdown** (or via `LLM_PROVIDER`/`LLM_MODEL` for the default). Only
+  providers with a configured key are offered. Since history is provider-agnostic
+  you can switch mid-conversation — Gemini will continue a chat Claude started.
+  Each provider's quirks live in a small adapter (`sdk/providers.py`); the
+  wrapper returns a normalized result, so the chat code is provider-agnostic.
 - **Near-real-time ingestion:** non-blocking, failure-safe log shipping to a
   separate ingestion service that validates and stores each log.
 - **UI:** a single-page chat with a conversation sidebar — **list** past
@@ -121,7 +123,8 @@ LLM_PROVIDER=gemini uvicorn app.main:app --port 8000   # LLM_MODEL optional (def
 | Method & path | Service | Purpose |
 |---|---|---|
 | `GET /` | chatbot | The chat UI (single page) |
-| `POST /chat` | chatbot | Send a message; returns reply + `session_id` |
+| `GET /providers` | chatbot | Available providers (with keys) + default, for the UI dropdown |
+| `POST /chat` | chatbot | Send a message (optional `provider`); returns reply + `session_id` |
 | `GET /conversations` | chatbot | List conversations (preview + message count), newest-active first |
 | `GET /conversations/{id}` | chatbot | Full message history for a session (resume) |
 | `POST /logs` | ingestion | Receive + validate + store an inference log |
