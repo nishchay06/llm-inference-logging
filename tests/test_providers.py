@@ -7,7 +7,12 @@ provider-shaped stubs — no real API key or network needed.
 
 from types import SimpleNamespace
 
-from sdk.providers import AnthropicAdapter, GeminiAdapter, ChatResult
+from sdk.providers import (
+    AnthropicAdapter,
+    GeminiAdapter,
+    ChatResult,
+    _GEMINI_THINKING_HEADROOM,
+)
 
 
 # ── Anthropic ────────────────────────────────────────────────────────────────
@@ -105,5 +110,6 @@ def test_gemini_create_translates_message_format():
         {"role": "model", "parts": [{"text": "hello"}]},
         {"role": "user", "parts": [{"text": "bye"}]},
     ]
-    # max_tokens mapped into the generation config as max_output_tokens.
-    assert getattr(call["config"], "max_output_tokens", None) == 64
+    # max_tokens mapped into the config, plus headroom for thinking tokens
+    # (which are billed against max_output_tokens on Gemini 3.x).
+    assert getattr(call["config"], "max_output_tokens", None) == 64 + _GEMINI_THINKING_HEADROOM

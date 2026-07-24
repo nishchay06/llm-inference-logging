@@ -75,13 +75,10 @@ class GeminiAdapter:
         # Gemini diverges: roles are user/model, content is wrapped in `parts`,
         # and max tokens goes through a config object — so the adapter TRANSLATES
         # the canonical message list rather than passing it through.
-        from google.genai import types
-
-        config = types.GenerateContentConfig(max_output_tokens=max_tokens)
         return client.models.generate_content(
             model=model,
             contents=_to_gemini_contents(messages),
-            config=config,
+            config=_gemini_config(max_tokens),
             **kwargs,
         )
 
@@ -98,16 +95,13 @@ class GeminiAdapter:
     def stream(self, client, *, model, messages, max_tokens, **kwargs):
         """Yield text deltas from the streaming chunks; usage_metadata arrives on
         the final chunk(s), model in model_version."""
-        from google.genai import types
-
-        config = types.GenerateContentConfig(max_output_tokens=max_tokens)
         parts: list[str] = []
         model_version = None
         input_tokens = output_tokens = None
         for chunk in client.models.generate_content_stream(
             model=model,
             contents=_to_gemini_contents(messages),
-            config=config,
+            config=_gemini_config(max_tokens),
             **kwargs,
         ):
             text = getattr(chunk, "text", None)
@@ -134,6 +128,26 @@ def _to_gemini_contents(messages: list[dict]) -> list[dict]:
         {"role": role_map.get(m["role"], "user"), "parts": [{"text": m["content"]}]}
         for m in messages
     ]
+
+
+_GEMINI_THINKING_HEADROOM = 2048
+
+
+def _gemini_config(max_tokens: int):
+    from google.genai import types
+
+    # Gemini 3.x flash is a "thinking" model, which affects two things:
+    #  1. It reasons for the whole latency then emits the answer in a burst — so
+    #     without tuning, streaming shows nothing until the end.
+    #     thinking_level="low" minimises that so tokens actually stream (and TTFT
+    #     drops). (The old thinking_budget knob is deprecated on 3.x; ...=0 → 400.)
+    #  2. Thinking tokens are billed against max_output_tokens, so the caller's
+    #     answer budget must be topped up with headroom — otherwise thinking eats
+    #     the budget and the visible answer is truncated (finish_reason=MAX_TOKENS).
+    return types.GenerateContentConfig(
+        max_output_tokens=max_tokens + _GEMINI_THINKING_HEADROOM,
+        thinking_config=types.ThinkingConfig(thinking_level="low"),
+    )
 
 
 # Registry: provider name → adapter instance (adapters are stateless).

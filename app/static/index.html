@@ -52,8 +52,9 @@
     #composer { display: flex; gap: 8px; padding: 14px; border-top: 1px solid var(--bd); background: #fff; }
     #provider { padding: 10px 8px; border: 1px solid var(--bd); border-radius: 8px; font: inherit; background: #fff; cursor: pointer; }
     #input { flex: 1; padding: 10px 12px; border: 1px solid var(--bd); border-radius: 8px; font: inherit; }
-    #send { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font: inherit; }
+    #send { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font: inherit; min-width: 76px; }
     #send:disabled { opacity: .5; cursor: default; }
+    #send.cancel { background: #dc2626; }
   </style>
 </head>
 <body>
@@ -174,12 +175,34 @@
       $input.focus();
     }
 
+    function renderAssistant(el, text) {
+      if (window.marked) el.innerHTML = marked.parse(text);
+      else el.textContent = text;
+    }
+
+    let abortCtrl = null; // set while a stream is in flight (button acts as Cancel)
+
+    function setStreaming(on) {
+      $send.textContent = on ? "Cancel" : "Send";
+      $send.classList.toggle("cancel", on);
+    }
+
+    // Stream the reply over SSE, appending deltas into the assistant bubble live.
     async function sendMessage(text) {
-      $send.disabled = true;
       addMessage("user", text);
       const typing = showTyping();
+      abortCtrl = new AbortController();
+      setStreaming(true);
+
+      let bubble = null;
+      let acc = "";
+      const ensureBubble = () => {
+        if (!bubble) { typing.remove(); bubble = addMessage("assistant", ""); }
+        return bubble;
+      };
+
       try {
-        const resp = await fetch("/chat", {
+        const resp = await fetch("/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -187,23 +210,53 @@
             session_id: sessionId,
             provider: $provider.value || null,
           }),
+          signal: abortCtrl.signal,
         });
-        const data = await resp.json();
-        sessionId = data.session_id; // adopt the id the server assigned
-        typing.remove();
-        addMessage("assistant", data.reply);
-        loadConversations(); // new/updated conversation appears at the top
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let i;
+          while ((i = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, i).trim();
+            buffer = buffer.slice(i + 2);
+            if (!frame.startsWith("data:")) continue;
+            const evt = JSON.parse(frame.slice(5).trim());
+            if (evt.type === "start") {
+              sessionId = evt.session_id; // adopt the id the server assigned
+            } else if (evt.type === "delta") {
+              acc += evt.text;
+              renderAssistant(ensureBubble(), acc);
+              $messages.scrollTop = $messages.scrollHeight;
+            } else if (evt.type === "error") {
+              ensureBubble().textContent = "[error: " + evt.message + "]";
+            }
+            // "done" — the stream ends on its own; nothing to do
+          }
+        }
       } catch (e) {
-        typing.remove();
-        addMessage("assistant", "[error contacting server]");
+        if (e.name === "AbortError") {
+          if (bubble && acc) renderAssistant(bubble, acc + " ⏹"); // cancelled — keep partial
+        } else {
+          ensureBubble().textContent = "[error contacting server]";
+        }
       } finally {
-        $send.disabled = false;
+        typing.remove();
+        abortCtrl = null;
+        setStreaming(false);
+        loadConversations(); // new/updated conversation floats to the top
         $input.focus();
       }
     }
 
     document.getElementById("composer").addEventListener("submit", (e) => {
       e.preventDefault();
+      if (abortCtrl) { abortCtrl.abort(); return; } // button is "Cancel" mid-stream
       const text = $input.value.trim();
       if (!text) return;
       $input.value = "";

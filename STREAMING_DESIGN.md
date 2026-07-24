@@ -85,6 +85,16 @@ While streaming, **Send** becomes **Cancel**, which calls `AbortController.abort
 Endpoint SSE + the frontend/cancel UX are verified live (they need a real
 provider / a browser), not in unit tests.
 
+## Provider note — Gemini thinking models
+`gemini-flash-latest` (Gemini 3.x flash) is a **thinking** model: at the default
+thinking level it reasons for the whole latency and then emits the answer in one
+burst, so the stream shows nothing until the end (TTFT ≈ total latency). The
+adapter sets `thinking_config=ThinkingConfig(thinking_level="low")`, which
+minimises thinking so tokens actually stream (verified: 9 delta frames over
+~700ms for a ~400-word reply). Notes: the old `thinking_budget` knob is
+deprecated on 3.x (`thinking_budget=0` → `400`); short replies still arrive in
+one burst simply because they finish before spreading (Claude does this too).
+
 ## Deferred / tradeoffs
 - **Concurrency:** the provider stream is sync; the endpoint runs it via
   Starlette's streaming (threadpool). True async fan-out (async SDK clients)
