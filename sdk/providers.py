@@ -47,6 +47,22 @@ class AnthropicAdapter:
             raw=response,
         )
 
+    def delta_text(self, delta) -> str | None:
+        """Text out of one streamed delta. Anthropic's `text_stream` already
+        yields plain strings, so this is identity."""
+        return delta if isinstance(delta, str) else None
+
+    def stream_usage(self, final):
+        """`(model, input_tokens, output_tokens)` from the final aggregated
+        message. Used by the patch layer, which sees the SDK's stream object
+        rather than this adapter's normalized generator."""
+        usage = getattr(final, "usage", None)
+        return (
+            getattr(final, "model", None),
+            getattr(usage, "input_tokens", None),
+            getattr(usage, "output_tokens", None),
+        )
+
     def stream(self, client, *, model, messages, max_tokens, **kwargs):
         """Yield text deltas, then `return` a ChatResult with usage from the
         final message. Uses the SDK's stream helper (text_stream + the final
@@ -90,6 +106,21 @@ class GeminiAdapter:
             input_tokens=getattr(usage, "prompt_token_count", None),
             output_tokens=getattr(usage, "candidates_token_count", None),
             raw=response,
+        )
+
+    def delta_text(self, chunk) -> str | None:
+        """Text out of one streamed chunk. Gemini streams whole response objects
+        rather than strings, and some carry no text at all."""
+        return getattr(chunk, "text", None)
+
+    def stream_usage(self, chunk):
+        """`(model, input_tokens, output_tokens)` from a chunk. Gemini reports
+        usage on the final chunk(s), so callers keep the last non-null values."""
+        usage = getattr(chunk, "usage_metadata", None)
+        return (
+            getattr(chunk, "model_version", None),
+            getattr(usage, "prompt_token_count", None),
+            getattr(usage, "candidates_token_count", None),
         )
 
     def stream(self, client, *, model, messages, max_tokens, **kwargs):

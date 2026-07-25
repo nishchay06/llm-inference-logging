@@ -4,16 +4,23 @@ Capture inference metadata around every LLM call **without cluttering the chat
 code**. The chat endpoint in `app/main.py` contains no timing, no token
 extraction, no logging — it just chats. That is the whole test of this design.
 
-## The one principle: three decoupled concerns
+## The one principle: decoupled concerns
 
 | Concern | *What* it is | Lives in |
 |---|---|---|
 | **Event schema** | what we capture | `sdk/events.py` — `InferenceLog` (Pydantic) |
-| **Instrumentation** | how we capture it | `sdk/tracing.py` — `TracedClient` |
+| **Capture** | timing, TTFT, status, redaction | `sdk/capture.py` |
+| **Application** | how capture reaches the call | `sdk/instrument.py` (patch, default) · `sdk/tracing.py` (wrap) |
+| **Normalization** | one result shape across providers | `sdk/providers.py` adapters · `sdk/client.py` |
 | **Sink** | where it goes | `sdk/sinks.py` — a `Callable[[InferenceLog], None]` |
 
-Keeping these three apart is what made every subsequent capability a *swap*
-rather than a rewrite:
+Capture and *application of* capture are separate rows on purpose. That split is
+what let auto-instrumentation become the default without reimplementing streaming
+semantics: `instrument()` and `TracedClient` drive the same core, so they record
+identical fields — asserted by parity tests rather than assumed.
+
+Keeping them apart is what made every subsequent capability a *swap* rather
+than a rewrite:
 
 - Shipping to a service = swap the **sink** (log line → HTTP POST).
 - Making delivery safe = wrap the **sink** (`QueueSink`).
@@ -98,9 +105,14 @@ In production a library like `litellm` would replace these hand-rolled adapters.
 ```
 sdk/
   events.py      InferenceLog — the wire contract, one source of truth
-  tracing.py     TracedClient — wrap, time, catch, emit
-  instrument.py  instrument() — the same capture applied by monkey-patch
+  capture.py     the capture core — timing, TTFT, status, log building
+  instrument.py  instrument() — capture applied by monkey-patch (the DEFAULT)
+  tracing.py     TracedClient — capture applied by wrapping (the alternative)
+  client.py      ProviderClient — normalizes only; capture comes from the patch
   providers.py   per-provider adapters + ChatResult
   sinks.py       HttpSink, RedisStreamSink, QueueSink
   redaction.py   PII scrubbing, applied before any preview is emitted
 ```
+
+The app builds `ProviderClient` over a patched SDK client by default; see
+[auto-instrumentation.md](./auto-instrumentation.md).

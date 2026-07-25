@@ -11,7 +11,7 @@ inference metadata and ships it out of the request path.
    ── POST /chat/stream (SSE) ─▶│  /chat:                                │
    ── GET  /conversations ─────▶│    1. persist user message             │
    ── GET  /conversations/{id} ▶│    2. build context window (last N)    │
-                                │    3. traced.chat/.stream(…) ── SDK    │
+                                │    3. client.chat/.stream(…) ── SDK    │
                                 │    4. persist assistant message        │
                                 └───────┬────────────────────┬───────────┘
                                         │ writes             │ emit InferenceLog
@@ -46,13 +46,14 @@ Compose default). Both converge on the same `store_log()`.
 
 ## Ingestion flow
 
-1. **Capture.** Every LLM call goes through `TracedClient` (`sdk/tracing.py`).
-   It times the call, extracts model / tokens / status from the response (or the
-   error), and builds a structured `InferenceLog` (`sdk/events.py`) — a pure
-   Pydantic model that is the **wire contract**. Streaming calls are teed, so one
-   log is emitted at stream close carrying both TTFT and total latency.
-   A monkey-patch alternative (`sdk/instrument.py`) applies the same capture with
-   no call-site change at all.
+1. **Capture.** Every LLM call is captured by the patched provider SDK
+   (`sdk/instrument.py`). Capture itself lives in `sdk/capture.py`: it times the
+   call, extracts model / tokens / status from the response (or the error), and
+   builds a structured `InferenceLog` (`sdk/events.py`) — a pure Pydantic model
+   that is the **wire contract**. Streaming calls are teed, so exactly one log is
+   emitted at stream close carrying both TTFT and total latency, with a distinct
+   status for a cancelled stream. The explicit `TracedClient` wrapper
+   (`sdk/tracing.py`) is the configurable alternative and uses the same core.
 2. **Redact.** Previews are PII-scrubbed **at the source**, before the event is
    emitted — the raw value never leaves the process inside telemetry
    (`sdk/redaction.py`).
@@ -78,15 +79,20 @@ Compose default). Both converge on the same `store_log()`.
   the broker, multi-provider, streaming, and the monkey-patch layer all landed
   without changing `InferenceLog` or the chat code. See
   [docs/sdk-design.md](./docs/sdk-design.md).
-- **Two instrumentation mechanisms, one capture path.** The explicit wrapper
-  (used by the app, because it also normalizes the response and handles streams)
-  and the monkey-patch (`instrument()`, zero-touch) share adapters, event schema,
-  redaction, and sink. Only the application mechanism differs.
+- **Auto-instrumentation is the default.** `instrument()` monkey-patches the
+  provider SDK — both the streaming and non-streaming methods — so capture is
+  ambient and the application contains no logging concerns at all. The explicit
+  `TracedClient` wrapper remains available via `LLM_INSTRUMENTATION=wrapper`.
+- **Two mechanisms, one capture core.** Both drive `sdk/capture.py`, so timing,
+  TTFT, status semantics and redaction are defined once. Tests assert the two
+  record identical fields for the same call, which is what makes the default
+  safe to switch.
 - **Decoupled from the chat path.** Logging is fire-and-forget: the chatbot never
   waits on log delivery and never fails because of it.
-- **Observe, never suppress.** On an LLM error `TracedClient` records
-  `status="error"` and **re-raises**, so the caller handles the failure exactly as
-  it would without instrumentation.
+- **Observe, never suppress.** On an LLM error the capture core records
+  `status="error"` and **re-raises**, and the patched methods return the
+  provider's raw response (or its own stream object) unchanged. Instrumented code
+  behaves exactly as it would uninstrumented.
 - **Wire model ≠ storage model,** so the transport contract and the database
   schema evolve independently.
 - **App data and telemetry are separate tables** — see
@@ -112,8 +118,13 @@ Compose default). Both converge on the same `store_log()`.
   and watching the backlog persist when it returns. Duplicates on replay are
   bounded by the `event_id` primary key. Poison messages (unparseable payloads)
   are dropped after logging rather than redelivered forever.
-- **Cancellation is a recorded outcome, not a gap.** A stream aborted by the
-  client emits `status="cancelled"` with the partial output and TTFT.
+- **Cancellation is a recorded outcome.** Closing a stream emits
+  `status="cancelled"` with the partial output and TTFT — verified at the SDK
+  level against both real provider SDKs. One caveat, measured rather than
+  assumed: when a *browser* disconnects mid-stream the server-side generator is
+  not closed promptly, so that log can be late or missing. It behaves identically
+  under both instrumentation mechanisms, so it is a property of the HTTP layer,
+  not of capture. See the README's improvements.
 - **Remaining window, accepted:** events sitting in the in-process `QueueSink`
   when the *chatbot itself* crashes before `XADD` are lost. Closing it means a
   synchronous durable write on the request path, which would violate the first

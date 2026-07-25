@@ -84,6 +84,10 @@ services:
       DATABASE_URL: postgresql+psycopg://chatbot:chatbot@db:5432/chatbot
       # Event-based transport: publish logs to Redis (the worker consumes them).
       REDIS_URL: redis://redis:6379/0
+      # How calls are instrumented: "patch" (default) auto-instruments by
+      # monkey-patching the provider SDK; "wrapper" uses the explicit
+      # TracedClient. Both capture identical fields — this is the rollback.
+      LLM_INSTRUMENTATION: ${LLM_INSTRUMENTATION:-patch}
       # Provider selection (default anthropic). For Gemini set LLM_PROVIDER=gemini
       # and GEMINI_API_KEY in .env; ANTHROPIC_API_KEY is optional then.
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}

@@ -21,6 +21,14 @@ def _anthropic_response(text="hi there", model="claude-sonnet-5", in_tok=7, out_
 
 
 class _FakeMessages:
+    """Duck-types the parts of `client.messages` that instrument() patches.
+
+    `stream` exists but is never called here: instrument() patches BOTH call
+    shapes and requires both to be present, deliberately, so an SDK that moved a
+    method fails loudly instead of leaving the app half-instrumented. The
+    streaming behaviour itself is covered in test_instrument_streaming.py.
+    """
+
     def __init__(self, response=None, error=None):
         self._response = response
         self._error = error
@@ -31,6 +39,9 @@ class _FakeMessages:
         if self._error is not None:
             raise self._error
         return self._response
+
+    def stream(self, **kwargs):  # pragma: no cover - presence is what matters
+        raise AssertionError("non-streaming tests should not open a stream")
 
 
 def _fake_anthropic(response=None, error=None):
@@ -43,7 +54,14 @@ def _fake_gemini(text="bonjour", model="gemini-3.6-flash", prompt=9, cand=4):
         model_version=model,
         usage_metadata=SimpleNamespace(prompt_token_count=prompt, candidates_token_count=cand),
     )
-    return SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: resp))
+    def _no_stream(**kw):  # pragma: no cover - presence is what matters
+        raise AssertionError("non-streaming tests should not open a stream")
+
+    return SimpleNamespace(
+        models=SimpleNamespace(
+            generate_content=lambda **kw: resp, generate_content_stream=_no_stream
+        )
+    )
 
 
 # ── capture + transparency ───────────────────────────────────────────────────

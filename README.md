@@ -1,8 +1,9 @@
 # LLM inference logging & ingestion
 
-A chatbot whose every model call is automatically instrumented, shipped out of
-the request path, and persisted for observability — plus the console to inspect
-it.
+A chatbot whose every model call is **auto-instrumented** — captured by patching
+the provider SDK, so the application code carries no logging concerns at all —
+then shipped out of the request path and persisted for observability, plus the
+console to inspect it.
 
 **Stack:** FastAPI · Anthropic (Claude) + Google (Gemini) · Postgres + SQLModel ·
 Redis Streams · React + TypeScript (Vite) · Docker Compose
@@ -99,6 +100,18 @@ LLM_PROVIDER=gemini uvicorn app.main:app --port 8000
 UI, and because conversation history is stored provider-agnostically you can
 switch mid-conversation — Gemini will continue a chat Claude started.
 
+### Switching instrumentation
+
+| `LLM_INSTRUMENTATION` | Mechanism |
+|---|---|
+| `patch` *(default)* | Auto-instrumentation: `instrument()` monkey-patches the provider SDK, so capture is ambient and the call site holds no logging concerns |
+| `wrapper` | The explicit `TracedClient` wraps each call |
+
+Both record identical `InferenceLog` fields — asserted by parity tests in
+`tests/test_app_instrumentation.py` and confirmed live — so this is a safe
+rollback rather than a behavioural switch. See
+[`docs/auto-instrumentation.md`](./docs/auto-instrumentation.md).
+
 ## Architecture overview
 
 Two independent FastAPI services share one Postgres database:
@@ -108,8 +121,9 @@ Two independent FastAPI services share one Postgres database:
 - **ingestion** (`ingestion/`, :8001) — receives, validates and stores inference
   logs, owns `inference_logs`, and serves the dashboard over them.
 
-Every model call goes through the SDK layer in `sdk/`, which captures a
-structured `InferenceLog`, redacts PII from the previews, and hands it to a
+Every model call is captured by the SDK layer in `sdk/` — by default through a
+patched provider client, so the application code has no logging in it — producing
+a structured `InferenceLog`, redacting PII from the previews, and handing it to a
 `QueueSink` — enqueued instantly, delivered on a background thread, so log
 shipping can be slow or fail **without ever blocking or breaking the chat**.
 Delivery goes either straight to ingestion over HTTP, or (when `REDIS_URL` is
@@ -117,7 +131,7 @@ set) through a **Redis Stream** consumed by a separate worker, which survives an
 ingestion or database outage.
 
 ```
-browser ─▶ chatbot :8000 ──(TracedClient → QueueSink, off the request path)──┐
+browser ─▶ chatbot :8000 ──(patched SDK → QueueSink, off the request path)───┐
    ▲          │ writes conversations, messages                              │
    │          ▼                                                    HTTP POST │ or XADD
    │       Postgres ◀── writes inference_logs ── ingestion :8001 ◀───────────┘
@@ -132,11 +146,14 @@ scaling notes.
 
 - **Multi-turn chat** with a short rolling context window (last N messages),
   persisted to Postgres so it survives restarts.
-- **Auto-instrumentation, two ways.** A transparent `TracedClient` wrapper
-  captures model, provider, latency, TTFT, tokens, status/errors, timestamps,
-  session ID and input/output previews — the chat code carries zero logging
-  concerns. A **zero-touch monkey-patch layer** (`instrument()`) captures even a
-  plain, un-wrapped `client.messages.create(...)` with no call-site change.
+- **Auto-instrumentation — on by default.** Telemetry is captured by
+  **monkey-patching the provider SDK**, so nothing in the application times a
+  call, reads token usage, or touches a sink. Both call shapes are patched
+  (`messages.create` *and* `messages.stream`; `generate_content` and
+  `generate_content_stream`), capturing model, provider, latency, TTFT, tokens,
+  status/errors, timestamps, session ID and input/output previews. An explicit
+  `TracedClient` wrapper is the documented alternative — same captured fields,
+  applied visibly — reachable with `LLM_INSTRUMENTATION=wrapper`.
 - **Multi-provider** — Anthropic and Gemini behind per-provider adapters,
   switchable per request from the UI.
 - **Streaming with cancel** — SSE token streaming; a cancelled stream persists
@@ -218,9 +235,10 @@ pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
-74 tests, ~3 seconds, no network and no Postgres required. They run against
-in-memory SQLite via a FastAPI dependency override; `TracedClient` tests inject a
-fake provider client and a fake sink. The code is testable precisely because the
+128 tests, ~3 seconds, no network and no Postgres required. They run against
+in-memory SQLite via a FastAPI dependency override; the instrumentation tests
+inject a fake provider client and a fake sink, and assert that the patch and
+wrapper mechanisms record identical fields. The code is testable precisely because the
 client, sink and database session are all injected.
 
 The same suite also runs against a **real Postgres**, because `/stats` and
@@ -274,9 +292,14 @@ Decisions taken deliberately, with what they cost:
   keys, IPs, phones) but not names or addresses, and its number heuristics can
   false-positive. No NER, no heavy dependency — appropriate for short previews,
   not a compliance control.
-- **The app uses the wrapper, not the monkey-patch.** Both exist; the wrapper is
-  wired in because it also normalizes responses across providers and handles
-  streaming. The patch layer is the zero-touch demonstration.
+- **Instrumentation is applied by monkey-patching, which is implicit by nature.**
+  Patching a third-party SDK is more fragile than wrapping it — a renamed method
+  breaks it — so `instrument()` raises loudly if a target is missing rather than
+  running with instrumentation that captures nothing, and tests assert the patch
+  against the real Anthropic and Gemini surfaces so an SDK upgrade fails CI. The
+  explicit `TracedClient` remains one environment variable away
+  (`LLM_INSTRUMENTATION=wrapper`), and tests assert both modes record identical
+  fields, so the choice is reversible rather than load-bearing.
 - **Conversation history is a fixed-size message window,** not summarisation or
   retrieval. Simple and predictable; it silently forgets long conversations.
 - **The chatbot's `messages` table stores unredacted text.** Redaction protects
@@ -329,10 +352,15 @@ Decisions taken deliberately, with what they cost:
   split OLTP from OLAP.
 - **Batch log delivery.** One event per call today; batching before delivery is a
   cheap throughput win under load.
-- **A dangling-message guard in the UI.** If a stream is aborted before the first
-  token arrives, the user message persists with no reply and no inference log
-  (the abort happens client-side, so the backend never sees the call). The UI
-  should either drop the message or offer a retry affordance.
+- **Capture cancels from a disconnecting HTTP client.** Cancellation is captured
+  correctly at the SDK level — closing a stream emits `status="cancelled"` with
+  the partial output and TTFT, verified live. What is unreliable is the HTTP
+  layer above it: when a browser disconnects mid-stream, the server-side
+  generator is not closed promptly, so the log is late or missing. It affects the
+  wrapper identically, so it is not a property of auto-instrumentation. The fix
+  is to watch for disconnect explicitly rather than relying on generator
+  finalisation. Relatedly, a stream aborted before the first token leaves a user
+  message with no reply, and the UI should drop it or offer a retry.
 - **Sanitize rendered markdown.** Assistant output renders as markdown; the model
   output is our own, but production should run it through DOMPurify.
 - **Cost tracking** per call and per model, and **Sentry-style error grouping** in

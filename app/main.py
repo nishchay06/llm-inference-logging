@@ -15,6 +15,8 @@ from sqlmodel import Session, select
 
 from db.engine import engine, get_session
 from db.models import Conversation, Message, to_utc_naive
+from sdk.client import ProviderClient
+from sdk.instrument import instrument
 from sdk.providers import DEFAULT_MODELS, build_client
 from sdk.sinks import HttpSink, QueueSink
 from sdk.tracing import TracedClient
@@ -53,27 +55,55 @@ def _build_inner_sink():
     return HttpSink(INGESTION_URL)
 
 
-# Build a wrapped client for every provider whose API key is configured, so the
-# UI can switch providers per request. They share one QueueSink (one background
-# shipper). A provider with no key is simply skipped, not offered.
+# How inference calls are instrumented:
+#
+#   "patch"    (default) — auto-instrumentation. `instrument()` monkey-patches the
+#              provider SDK, so capture is ambient and the call site holds no
+#              logging concerns whatsoever. ProviderClient only normalizes.
+#   "wrapper"  — the explicit alternative: TracedClient wraps each call. Same
+#                captured fields (asserted by parity tests), just applied visibly.
+#
+# Keeping the wrapper reachable by configuration means this is a one-variable
+# rollback, not a code change, if patching ever misbehaves against a new SDK.
+DEFAULT_INSTRUMENTATION = "patch"
+INSTRUMENTATION = os.getenv("LLM_INSTRUMENTATION", DEFAULT_INSTRUMENTATION)
+
+
+def build_clients(*, sink, mode: str | None = None, client_factory=build_client):
+    """Build one client per provider that has credentials configured.
+
+    Returns `(clients_by_provider, model_by_provider)`. A provider without a key
+    is skipped rather than fatal, so the app runs with whatever is available and
+    the UI offers exactly that.
+
+    `client_factory` is injectable so tests can build both modes over the same
+    fake provider and compare what each records.
+    """
+    mode = mode or INSTRUMENTATION
+    clients: dict[str, object] = {}
+    models: dict[str, str] = {}
+    for provider in DEFAULT_MODELS:
+        try:
+            raw = client_factory(provider)
+        except Exception:
+            continue  # provider not configured (e.g. missing key)
+        if mode == "wrapper":
+            clients[provider] = TracedClient(raw, provider=provider, sink=sink)
+        else:
+            clients[provider] = ProviderClient(instrument(raw, provider, sink), provider)
+        models[provider] = DEFAULT_MODELS[provider]
+    return clients, models
+
+
+# All providers share one QueueSink, so there is a single background shipper.
 _sink = QueueSink(_build_inner_sink())
-TRACED: dict[str, TracedClient] = {}
-MODEL_FOR: dict[str, str] = {}
-for _provider in DEFAULT_MODELS:
-    try:
-        TRACED[_provider] = TracedClient(
-            build_client(_provider), provider=_provider, sink=_sink
-        )
-        MODEL_FOR[_provider] = DEFAULT_MODELS[_provider]
-    except Exception:
-        # provider not configured (e.g. missing key) — leave it out
-        pass
+CLIENTS, MODEL_FOR = build_clients(sink=_sink)
 
 # Default provider from env, falling back to whatever is available. LLM_MODEL (if
 # set) overrides the model for the default provider only.
 DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
-if DEFAULT_PROVIDER not in TRACED:
-    DEFAULT_PROVIDER = next(iter(TRACED), "")
+if DEFAULT_PROVIDER not in CLIENTS:
+    DEFAULT_PROVIDER = next(iter(CLIENTS), "")
 if os.getenv("LLM_MODEL") and DEFAULT_PROVIDER in MODEL_FOR:
     MODEL_FOR[DEFAULT_PROVIDER] = os.environ["LLM_MODEL"]
 
@@ -110,7 +140,7 @@ class ProvidersOut(BaseModel):
 def providers():
     """Which providers the UI can offer (only those with a key configured)."""
     return ProvidersOut(
-        providers=[ProviderInfo(name=p, model=MODEL_FOR[p]) for p in TRACED],
+        providers=[ProviderInfo(name=p, model=MODEL_FOR[p]) for p in CLIENTS],
         default=DEFAULT_PROVIDER,
     )
 
@@ -155,9 +185,9 @@ def _resolve_provider(payload: ChatRequest):
     """Pick the provider (default if unspecified); 400 if it isn't available.
     Runs before any DB write or LLM call so failures are fast and clean."""
     provider = payload.provider or DEFAULT_PROVIDER
-    if provider not in TRACED:
+    if provider not in CLIENTS:
         raise HTTPException(status_code=400, detail=f"provider {provider!r} not available")
-    return provider, TRACED[provider], MODEL_FOR[provider]
+    return provider, CLIENTS[provider], MODEL_FOR[provider]
 
 
 def _record_user_message(session_id: str, message: str) -> list[dict]:
@@ -194,11 +224,11 @@ def _record_assistant_message(session_id: str, content: str) -> None:
 
 @app.post("/chat")
 def chat(payload: ChatRequest):
-    _, traced, model = _resolve_provider(payload)
+    _, client, model = _resolve_provider(payload)
     session_id = payload.session_id or str(uuid.uuid4())
 
     window = _record_user_message(session_id, payload.message)
-    reply = traced.chat(
+    reply = client.chat(
         model=model, max_tokens=1024, messages=window, session_id=session_id
     ).text
     _record_assistant_message(session_id, reply)
@@ -212,13 +242,13 @@ def _sse(obj: dict) -> str:
 
 @app.post("/chat/stream")
 def chat_stream(payload: ChatRequest):
-    provider, traced, model = _resolve_provider(payload)
+    provider, client, model = _resolve_provider(payload)
     session_id = payload.session_id or str(uuid.uuid4())
     window = _record_user_message(session_id, payload.message)
 
     def event_stream():
         parts: list[str] = []
-        stream_gen = traced.stream(
+        stream_gen = client.stream(
             model=model, max_tokens=1024, messages=window, session_id=session_id
         )
         try:
