@@ -1,4 +1,4 @@
-"""Tests for QueueSink — the Rung 5 non-blocking, failure-safe sink.
+"""Tests for QueueSink — the non-blocking, failure-safe sink.
 
 The safety guarantee: enqueuing an event returns immediately and never raises,
 even when the underlying delivery fails. Delivery happens on a background

@@ -1,9 +1,10 @@
-# Auto-Instrumentation Design — the monkey-patch layer
+# Auto-instrumentation — the monkey-patch layer
 
-The assignment's capitalized emphasis: *"an architecture which can
-AUTO-INSTRUMENT."* We built the honest way first — an explicit `TracedClient`
-wrapper — and `sdk/DESIGN.md` promised a monkey-patch layer as "a thin drop-in."
-This is that layer.
+True zero-touch capture: instrumentation that requires no change at the call
+site at all. The explicit `TracedClient` wrapper came first, on purpose — build
+the mechanism you understand before the one that hides itself — and this layer
+applies exactly the same capture logic by patching instead of wrapping. See
+[sdk-design.md](./sdk-design.md) for the wrapper it complements.
 
 ## What it does
 `instrument(client, provider, sink)` patches the provider's generation method on

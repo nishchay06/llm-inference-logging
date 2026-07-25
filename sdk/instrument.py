@@ -3,7 +3,7 @@ call is captured automatically — the zero-touch alternative to TracedClient.
 
 Reuses everything (adapters, InferenceLog, sink, _preview→redaction); only the
 application mechanism differs (patch vs wrap). The patched method OBSERVES only:
-it returns the provider's raw response unchanged. See AUTOINSTRUMENT_DESIGN.md.
+it returns the provider's raw response unchanged. See docs/auto-instrumentation.md.
 """
 
 from __future__ import annotations

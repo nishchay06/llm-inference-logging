@@ -17,3 +17,4 @@ venv/
 
 # Session handoff docs (local, not committed)
 .handoff/
+LEARNING_PLAN.md

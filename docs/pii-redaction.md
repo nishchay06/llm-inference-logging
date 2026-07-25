@@ -50,12 +50,5 @@ phone** so a 16-digit card isn't mislabeled; phone last.
 ## Known limitations (honest, documented)
 Regex is imperfect: it won't catch unstructured PII (names, addresses) — that's
 the Presidio/NER upgrade — and phone/number heuristics can have false positives.
-Accepted for a lightweight in-house scrubber; noted in the README.
+Accepted for a lightweight in-house scrubber, and stated in the README.
 
-## TDD
-- `sdk/redaction.py`: each detector (email, SSN, IP, API key, Luhn-valid card,
-  phone) → correct token; an **invalid-Luhn** number is *not* tagged `[CARD]`;
-  clean text is unchanged; multiple PII in one string all scrubbed.
-- Wrapper integration (`test_tracing.py`): a chat whose input/output contains an
-  email / card produces an `InferenceLog` whose previews contain the token and
-  **not** the raw value.

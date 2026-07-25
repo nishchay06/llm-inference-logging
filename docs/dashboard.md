@@ -1,7 +1,7 @@
-# Dashboard Design — an observability console for the inference logs
+# Dashboard — an observability console over the inference logs
 
-Turn `inference_logs` into a **Latency + Throughput + Errors** console — the
-bonus deliverable, and the payoff that shows *why the whole system exists*. It
+Turn `inference_logs` into a latency / throughput / errors console — the payoff
+that shows why the whole system exists. It
 has two planes, like every log console (CloudWatch, Datadog, Grafana, Kibana):
 
 1. **Overview** — aggregate health: KPI cards + latency/throughput charts.
@@ -10,7 +10,7 @@ has two planes, like every log console (CloudWatch, Datadog, Grafana, Kibana):
 
 ## Why it lives on the ingestion service
 The dashboard is a **read view over `inference_logs`**, which the **ingestion**
-service owns (Rung 6 split). So ingestion serves it (`GET /dashboard`) — the
+service owns. So ingestion serves it (`GET /dashboard`) — the
 chatbot never reads telemetry it doesn't own. This keeps the single-owner
 discipline and mirrors how the chatbot serves its own UI at `/`.
 
@@ -52,33 +52,27 @@ The **same filter bar drives both planes** (e.g. `status=error` scopes the chart
 - `GET /dashboard` — the page; `ingestion/static/` mount + vendored Chart.js.
 
 ## Aggregation location
-Percentiles and time-buckets are computed **in Python** (fetch the filtered
-rows/columns, aggregate in code), not in SQL: `percentile_cont`/`date_trunc` are
-Postgres-only and the tests run on in-memory SQLite. DB-agnostic + unit-testable,
-and fine at this scale. **Scaling tradeoff (README):** push aggregation into SQL
-and/or a columnar store (ClickHouse) at high telemetry volume.
+Percentiles, per-model grouping and time buckets are computed **in the
+database**: `percentile_disc` as an ordered-set aggregate, and a floored-epoch
+`GROUP BY` for the buckets. A large window therefore transfers a handful of rows
+rather than the whole table.
 
-## Charting
-Vendor **Chart.js** locally into `ingestion/static/` (same pattern as
-`marked.js`), served via the `/static` mount. Consult the `dataviz` skill for
-palette/legibility (light+dark, colorblind-safe status colors) before writing
-chart code. Plain HTML/JS otherwise; auto-refresh via `setInterval` polling.
+SQLite — used by the test suite — has neither, so the code branches on the
+dialect and falls back to aggregating in Python. That fallback is O(rows) in
+memory and is deliberately not the production path. `percentile_disc` rather
+than `percentile_cont` so both branches return the same value for the same data
+(see [read-api.md](./read-api.md)).
 
-## Data caveat (state in README)
+At genuinely high telemetry volume the next moves are time-based partitioning
+with retention, and a columnar store (ClickHouse) for the aggregate read path.
+
+## Data caveat
 We store input/output **previews (~200 chars)** + `error_type`/`error_message`,
 not full payloads. The detail view diagnoses from previews + error text, not full
 request/response bodies — a deliberate storage/privacy tradeoff. A real system
 would store full payloads (with PII redaction) or link to a trace store.
 
-## Test plan (TDD, SQLite)
-- `/logs`: filter by status/provider/model/session; `q` substring; ordering
-  (newest-first); pagination (`limit`/`offset` + correct `total`); empty DB.
-- `/stats`: percentiles from a known latency set; error_rate.
-- `/stats/timeseries`: bucketing (rows in/out of window; per-bucket calls+errors).
-- `/stats/by_model`: grouping + per-model error_rate.
-- `/dashboard`: serving-shell test; `/static/chart.min.js` served.
-
 ## Scope
-**First cut = the core two-plane console above.** Deferred: Sentry-style error
+Deferred: Sentry-style error
 grouping / log patterns, timeline brush-to-filter, saved views, cost tracking,
 live push (polling suffices), SQL/OLAP aggregation.

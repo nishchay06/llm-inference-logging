@@ -33,5 +33,11 @@ COPY . .
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 COPY --from=frontend /build/dashboard/dist ./dashboard/dist
 
+# Drop root: nothing here needs it at runtime, and a container escape should not
+# land on uid 0. Done after COPY so the image layers stay owned by root (the app
+# cannot rewrite its own code).
+RUN useradd --create-home --uid 10001 app
+USER app
+
 # Default command; each service overrides `command:` in docker-compose.yml.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

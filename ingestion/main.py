@@ -1,9 +1,11 @@
+import logging
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -17,9 +19,19 @@ from sdk.events import InferenceLog
 
 load_dotenv()
 
+# See the note in app/main.py: the application configures logging, the library
+# only requests a logger.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 # Schema is created out-of-band by `python -m db.init` (see db/init.py), not on
 # startup — see the note in app/main.py.
-app = FastAPI(title="Ingestion — Rung 6")
+app = FastAPI(title="Inference log ingestion")
+
+# Upper bound on a single page of logs (see GET /logs).
+MAX_PAGE_SIZE = 500
 
 # The observability console — ingestion owns the telemetry, so it serves the
 # dashboard (reads inference_logs via the /stats* and /logs endpoints below).
@@ -46,13 +58,47 @@ def _naive_utc(since: datetime | None) -> datetime | None:
     return since
 
 
+def _dialect(session: Session) -> str:
+    return session.get_bind().dialect.name
+
+
 def _percentile(sorted_vals: list[float], p: float) -> float | None:
-    """Nearest-rank percentile. Computed in Python so it works on both Postgres
-    and the SQLite used in tests (percentile_cont is Postgres-only)."""
+    """Nearest-rank percentile, in Python — the fallback path for backends with
+    no ordered-set aggregates (the SQLite used in tests). See `_percentiles`."""
     if not sorted_vals:
         return None
     k = math.ceil(p / 100 * len(sorted_vals)) - 1
     return sorted_vals[min(len(sorted_vals) - 1, max(0, k))]
+
+
+def _percentiles(session: Session, conds: list) -> tuple:
+    """p50/p95/p99 of latency over the filtered rows.
+
+    On Postgres this is an ordered-set aggregate computed **in the database**, so
+    a million-row window transfers three numbers rather than a million. SQLite
+    has no `percentile_disc`, so tests fall back to sorting in Python — fine at
+    test sizes, and never the production path.
+
+    `percentile_disc` (not `_cont`) is deliberate: it returns an actual observed
+    value, matching the nearest-rank definition `_percentile` implements, so both
+    backends give identical answers for identical data.
+    """
+    if _dialect(session) == "postgresql":
+        query = select(
+            *[
+                func.percentile_disc(p).within_group(InferenceLogRow.latency_ms.asc())
+                for p in (0.5, 0.95, 0.99)
+            ]
+        )
+        for c in conds:
+            query = query.where(c)
+        return tuple(session.exec(query).one())
+
+    query = select(InferenceLogRow.latency_ms)
+    for c in conds:
+        query = query.where(c)
+    latencies = sorted(v for v in session.exec(query).all() if v is not None)
+    return tuple(_percentile(latencies, p) for p in (50, 95, 99))
 
 
 def _log_conditions(
@@ -120,9 +166,9 @@ def stats(
     since: datetime | None = None,
     session: Session = Depends(get_session),
 ):
-    """Latency / throughput / errors over the (filtered) inference logs. Counts/avg
-    come from a SQL aggregate; latency percentiles are computed in Python. The
-    same filters as /logs apply, so the dashboard's filter bar scopes this too."""
+    """Latency / throughput / errors over the (filtered) inference logs. Both the
+    counts and the percentiles are SQL aggregates on Postgres — no row transfer.
+    The same filters as /logs apply, so the dashboard's filter bar scopes this too."""
     since = _naive_utc(since)
     conds = _log_conditions(status=status, provider=provider, model=model, q=q, since=since)
 
@@ -134,15 +180,13 @@ def stats(
         func.sum(InferenceLogRow.input_tokens),
         func.sum(InferenceLogRow.output_tokens),
     )
-    lat_query = select(InferenceLogRow.latency_ms)
     for c in conds:
         query = query.where(c)
-        lat_query = lat_query.where(c)
 
     total, success, errors, avg_latency, itok, otok = session.exec(query).one()
     total = total or 0
     errors = errors or 0
-    latencies = sorted(v for v in session.exec(lat_query).all() if v is not None)
+    p50, p95, p99 = _percentiles(session, conds)
     return StatsOut(
         since=since,
         total_calls=total,
@@ -150,9 +194,9 @@ def stats(
         error_count=errors,
         error_rate=(errors / total) if total else 0.0,
         avg_latency_ms=avg_latency,  # None when the window is empty
-        p50_ms=_percentile(latencies, 50),
-        p95_ms=_percentile(latencies, 95),
-        p99_ms=_percentile(latencies, 99),
+        p50_ms=p50,
+        p95_ms=p95,
+        p99_ms=p99,
         total_input_tokens=itok or 0,
         total_output_tokens=otok or 0,
     )
@@ -180,13 +224,48 @@ def timeseries(
     bucket: int = 60,
     session: Session = Depends(get_session),
 ):
-    """Per-bucket volume for the throughput/latency charts. Rows are bucketed in
-    Python (date_trunc is Postgres-only); only non-empty buckets are returned."""
+    """Per-bucket volume for the throughput/latency charts; only non-empty buckets
+    are returned.
+
+    On Postgres the bucketing is a `GROUP BY` on a floored epoch, so the database
+    returns one row per bucket. SQLite has no `extract(epoch …)`, so tests fall
+    back to bucketing the rows in Python — correct, but O(rows) in memory, which
+    is why it is not the production path."""
     since = _naive_utc(since)
+    bucket = max(1, bucket)
+    conds = _log_conditions(status=status, provider=provider, model=model, q=q, since=since)
+    errors_expr = func.sum(case((InferenceLogRow.status != "success", 1), else_=0))
+
+    if _dialect(session) == "postgresql":
+        # started_at is stored naive-UTC, so extracting the epoch needs no
+        # timezone conversion; floor-divide into the bucket width and group.
+        bucket_expr = (
+            func.floor(func.extract("epoch", InferenceLogRow.started_at) / bucket)
+            * bucket
+        )
+        query = select(
+            bucket_expr,
+            func.count(),
+            errors_expr,
+            func.avg(InferenceLogRow.latency_ms),
+        ).group_by(bucket_expr).order_by(bucket_expr)
+        for c in conds:
+            query = query.where(c)
+        points = [
+            TimeseriesPoint(
+                start=datetime.fromtimestamp(int(b), timezone.utc),
+                calls=calls,
+                errors=errs or 0,
+                avg_latency_ms=avg_lat,
+            )
+            for b, calls, errs, avg_lat in session.exec(query).all()
+        ]
+        return TimeseriesOut(bucket_seconds=bucket, points=points)
+
     query = select(
         InferenceLogRow.started_at, InferenceLogRow.status, InferenceLogRow.latency_ms
     )
-    for c in _log_conditions(status=status, provider=provider, model=model, q=q, since=since):
+    for c in conds:
         query = query.where(c)
 
     buckets: dict[int, dict] = {}
@@ -294,8 +373,10 @@ def query_logs(
     session_id: str | None = None,
     q: str | None = None,
     since: datetime | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    # Bounded on purpose: an unbounded `limit` on an unauthenticated read is a
+    # free way to make the service materialise the whole table. Page instead.
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ):
     """The log stream for the explorer: filtered, newest-first, paginated.

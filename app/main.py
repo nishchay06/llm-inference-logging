@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -20,10 +21,19 @@ from sdk.tracing import TracedClient
 
 load_dotenv()
 
+# Configuring logging is the application's job, not the library's: modules under
+# sdk/ only ever call getLogger(__name__), so without a root handler here their
+# records (e.g. a dropped inference log) would be silently discarded. Uvicorn
+# configures only its own loggers, so this is what makes ours visible.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 # Schema is created out-of-band by `python -m db.init` (see db/init.py), not on
 # startup — two services racing to CREATE TABLE on boot causes a concurrent-DDL
 # error, and schema management belongs in a migration step anyway.
-app = FastAPI(title="Chatbot — Rung 6")
+app = FastAPI(title="Chatbot")
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://127.0.0.1:8001/logs")
 REDIS_URL = os.getenv("REDIS_URL")

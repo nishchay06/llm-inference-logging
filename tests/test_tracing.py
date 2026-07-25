@@ -113,7 +113,7 @@ def test_error_is_captured_and_reraised():
 
 
 def test_chat_unaffected_when_log_delivery_fails():
-    """Rung 5's guarantee, end to end: if the log sink's delivery fails, the
+    """The core guarantee, end to end: if the log sink's delivery fails, the
     chat must still succeed. With a QueueSink, delivery happens on a background
     thread and its failure is swallowed."""
     from sdk.sinks import QueueSink

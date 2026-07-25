@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      # The suite makes no network calls and needs no Postgres — it runs against
+      # in-memory SQLite with fake provider clients, so CI needs no services.
+      - name: Run tests
+        run: python -m pytest -q
+
+  build:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves the multi-stage build (both React apps + the Python image) is not
+      # broken, without needing any API keys.
+      - name: Build image
+        run: docker build -t chatbot-app:ci .

@@ -12,7 +12,7 @@ from sqlmodel.pool import StaticPool
 
 from db.engine import get_session
 from db.models import InferenceLogRow
-from ingestion.main import app
+from ingestion.main import MAX_PAGE_SIZE, app
 
 
 @pytest.fixture
@@ -217,3 +217,28 @@ def test_logs_text_search(client_and_engine):
     assert client.get("/logs", params={"q": "lighthouse"}).json()["total"] == 1
     assert client.get("/logs", params={"q": "PARIS"}).json()["total"] == 1  # case-insensitive
     assert client.get("/logs", params={"q": "quota"}).json()["total"] == 1  # matches error_message
+
+
+def test_logs_limit_is_bounded(client_and_engine):
+    """An unbounded `limit` would let any caller make the service materialise the
+    whole table. Over the cap is rejected (422), at the cap is fine."""
+    client, engine = client_and_engine
+    _add(engine)
+
+    assert client.get("/logs", params={"limit": 10_000_000}).status_code == 422
+    assert client.get("/logs", params={"limit": 0}).status_code == 422
+    assert client.get("/logs", params={"offset": -1}).status_code == 422
+    assert client.get("/logs", params={"limit": MAX_PAGE_SIZE}).status_code == 200
+
+
+def test_percentiles_match_nearest_rank(client_and_engine):
+    """The SQLite fallback and the Postgres `percentile_disc` path must agree, so
+    the definition is pinned here: nearest-rank, an actually observed value."""
+    client, engine = client_and_engine
+    for ms in (10.0, 20.0, 30.0, 40.0, 100.0):
+        _add(engine, latency_ms=ms)
+
+    body = client.get("/stats").json()
+    assert body["p50_ms"] == 30.0
+    assert body["p95_ms"] == 100.0
+    assert body["p99_ms"] == 100.0

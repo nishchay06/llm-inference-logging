@@ -19,7 +19,7 @@ Every real pipeline is **producer → durable broker → consumer worker → sto
 (Kafka, Redis Streams, Kinesis): an append-only stream, **consumer groups** so
 workers share load, **at-least-once + acks** (unacked messages redeliver after a
 crash), and a **dead-letter** path for poison messages. Our `QueueSink` is the
-single-process seed of exactly this (see `sdk/DESIGN.md`).
+single-process seed of exactly this (see [sdk-design.md](./sdk-design.md)).
 
 ## Decisions
 - **Broker: Redis Streams** — one lightweight container; `XADD` append, consumer

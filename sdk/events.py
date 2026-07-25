@@ -5,9 +5,14 @@ from pydantic import BaseModel, Field
 
 
 class InferenceLog(BaseModel):
-    """One structured record per LLM call. This is the single source of truth
-    for the metadata shape — the ingestion API (Rung 4) validates against it and
-    the database (Rung 6) stores it, so we define it once, here."""
+    """One structured record per LLM call — the wire contract between the SDK and
+    the ingestion service. Single source of truth for the metadata shape: the
+    ingestion API validates incoming payloads against it and the worker parses
+    them with it, so it is defined once, here.
+
+    Note `status` is an open string rather than an enum: a streaming call can end
+    "cancelled", and a telemetry schema should tolerate a producer that knows a
+    status this consumer doesn't yet."""
 
     # Identity
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))

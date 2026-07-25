@@ -3,7 +3,7 @@
 Regex detectors + typed-token replacement (Datadog/CloudWatch style), applied at
 the source before a log is emitted. No NER/Presidio — previews are short and we
 want zero heavy deps. Imperfect by design (won't catch names/addresses; number
-heuristics can false-positive) — see REDACTION_DESIGN.md.
+heuristics can false-positive) — see docs/pii-redaction.md.
 """
 
 import re

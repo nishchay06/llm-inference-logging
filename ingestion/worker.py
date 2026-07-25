@@ -7,6 +7,7 @@ is stored, so a crash mid-processing redelivers it. Poison messages (bad JSON /
 failed validation) are dropped after logging, so they don't redeliver forever.
 """
 
+import logging
 import os
 import socket
 import time
@@ -21,6 +22,8 @@ from sdk.events import InferenceLog
 
 STREAM = "inference_logs"
 GROUP = "ingesters"
+
+log = logging.getLogger(__name__)
 
 
 class PoisonMessage(Exception):
@@ -50,14 +53,14 @@ def run() -> None:
     client = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
     consumer = f"{socket.gethostname()}-{os.getpid()}"
     _ensure_group(client)
-    print(f"worker consuming {STREAM!r} in group {GROUP!r} as {consumer!r}", flush=True)
+    log.info("worker consuming %r in group %r as %r", STREAM, GROUP, consumer)
     while True:
         try:
             resp = client.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=10, block=5000)
         except redis_exc.TimeoutError:
             continue  # idle blocking read — just wait again
         except redis_exc.RedisError as exc:
-            print(f"WARNING: redis read failed, retrying: {exc!r}", flush=True)
+            log.warning("redis read failed, retrying: %r", exc)
             time.sleep(1)
             continue
         for _stream, entries in resp or []:
@@ -66,13 +69,16 @@ def run() -> None:
                     try:
                         handle_entry(fields, session)
                     except PoisonMessage as exc:
-                        print(f"WARNING: dropping poison entry {entry_id}: {exc}")
+                        log.warning("dropping poison entry %s: %s", entry_id, exc)
                         client.xack(STREAM, GROUP, entry_id)  # drop, don't redeliver
                     except Exception as exc:  # transient (e.g. DB down) — redeliver
-                        print(f"WARNING: store failed for {entry_id}, will retry: {exc!r}")
+                        log.warning("store failed for %s, will retry: %r", entry_id, exc)
                     else:
                         client.xack(STREAM, GROUP, entry_id)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     run()

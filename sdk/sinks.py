@@ -1,3 +1,4 @@
+import logging
 import queue
 import threading
 from typing import Callable
@@ -6,11 +7,13 @@ import httpx
 
 from .events import InferenceLog
 
+log = logging.getLogger(__name__)
+
 
 def print_sink(event: InferenceLog) -> None:
-    """The Rung 3 sink: just print. Kept as a simple reference / fallback."""
-    print("---- inference log ----")
-    print(event.model_dump_json(indent=2))
+    """The simplest possible sink: write the event to the log. Kept as a
+    reference implementation and a fallback when no transport is configured."""
+    log.info("inference log: %s", event.model_dump_json())
 
 
 class RedisStreamSink:
@@ -56,13 +59,18 @@ class HttpSink:
 
 
 class QueueSink:
-    """Makes any inner sink non-blocking and failure-safe (Rung 5).
+    """Makes any inner sink non-blocking and failure-safe.
 
     Enqueuing an event returns immediately — the chat never waits for delivery.
     A background daemon thread drains the queue and calls the inner sink; if
     delivery fails, the error is logged and the event dropped, never surfacing
-    to the caller. This is the classic producer/consumer pattern, and the seed
-    for Rung 8's external (Redis/Kafka) queue — there, only the queue changes.
+    to the caller. This is the classic producer/consumer pattern, and the same
+    shape an external broker takes — swapping in RedisStreamSink as the inner
+    sink changes the destination, not this class.
+
+    `dropped` / `failed` are counters for the two ways telemetry is lost. In a
+    production deployment these are what you'd export as metrics — a logging
+    pipeline that silently discards its own events is the classic blind spot.
     """
 
     def __init__(
@@ -72,6 +80,8 @@ class QueueSink:
     ):
         self._inner = inner
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue)
+        self.dropped = 0  # queue was full at enqueue time
+        self.failed = 0  # inner sink raised during delivery
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
@@ -81,7 +91,11 @@ class QueueSink:
         try:
             self._queue.put_nowait(event)
         except queue.Full:
-            print("WARNING: inference-log queue is full; dropping an event")
+            self.dropped += 1
+            log.warning(
+                "inference-log queue full; dropping event (%d dropped so far)",
+                self.dropped,
+            )
 
     def _worker(self) -> None:
         while True:
@@ -89,7 +103,8 @@ class QueueSink:
             try:
                 self._inner(event)
             except Exception as exc:  # delivery failure must never escape
-                print(f"WARNING: failed to ship inference log: {exc!r}")
+                self.failed += 1
+                log.warning("failed to ship inference log: %r", exc)
             finally:
                 self._queue.task_done()
 

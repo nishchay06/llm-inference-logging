@@ -39,7 +39,7 @@ class TracedClient:
         self._client = client
         self._provider = provider
         self._adapter = ADAPTERS[provider]
-        self._sink = sink  # injected, not hardcoded — swappable per rung
+        self._sink = sink  # injected, not hardcoded — the destination is swappable
 
     def chat(
         self,
