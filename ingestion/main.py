@@ -24,13 +24,18 @@ app = FastAPI(title="Ingestion — Rung 6")
 # The observability console — ingestion owns the telemetry, so it serves the
 # dashboard (reads inference_logs via the /stats* and /logs endpoints below).
 STATIC_DIR = Path(__file__).parent / "static"
-DASHBOARD_HTML = STATIC_DIR / "dashboard.html"
+DASHBOARD_HTML = STATIC_DIR / "dashboard.html"  # legacy plain-HTML fallback
+# The built React dashboard (dashboard/dist) — from `npm run build` or the
+# Docker multi-stage build. Served at / and /dashboard when present (mount at
+# end of file so all API routes take precedence).
+DASHBOARD_DIST = Path(__file__).parent.parent / "dashboard" / "dist"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/dashboard")
 def dashboard():
-    return FileResponse(DASHBOARD_HTML)
+    index = DASHBOARD_DIST / "index.html"
+    return FileResponse(index if index.is_file() else DASHBOARD_HTML)
 
 
 def _naive_utc(since: datetime | None) -> datetime | None:
@@ -314,3 +319,10 @@ def query_logs(
         LogItem(**{k: getattr(r, k) for k in LogItem.model_fields}) for r in rows
     ]
     return LogsOut(total=total, items=items)
+
+
+# Serve the built React dashboard at "/" (and its /assets), mounted LAST so all
+# API routes above take precedence. Present in production / Docker; for local
+# dashboard work use `cd dashboard && npm run dev` (Vite proxies to :8001).
+if DASHBOARD_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(DASHBOARD_DIST), html=True), name="dashboard-app")
