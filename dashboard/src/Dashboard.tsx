@@ -111,7 +111,7 @@ export default class Dashboard extends React.Component<{}, State> {
       row("started_at", fullTime(l.started_at)),
       row("created_at", fullTime(l.created_at)),
       row("latency_ms", nfmt(l.latency_ms)),
-      row("ttft_ms", l.ttft_ms == null ? null : nfmt(l.ttft_ms)),
+      row("ttft_ms", l.ttft_ms == null ? null : msFmt(l.ttft_ms)),
       row("input_tokens", l.input_tokens == null ? null : nfmt(l.input_tokens)),
       row("output_tokens", l.output_tokens == null ? null : nfmt(l.output_tokens)),
       row("error_type", l.error_type, { color: l.error_type ? "#dc2626" : "var(--color-text)" }),
@@ -288,7 +288,7 @@ export default class Dashboard extends React.Component<{}, State> {
                           </div>
                           <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                             <div style={{ fontSize: 13 }}>{msFmt(l.latency_ms)}</div>
-                            <div style={{ fontSize: 11, color: muted(50) }}>ttft {l.ttft_ms == null ? "—" : nfmt(l.ttft_ms)}</div>
+                            <div style={{ fontSize: 11, color: muted(50) }}>ttft {msFmt(l.ttft_ms)}</div>
                           </div>
                           <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 12.5 }}>
                             {(l.input_tokens == null ? "—" : nfmt(l.input_tokens))} / {(l.output_tokens == null ? "—" : nfmt(l.output_tokens))}

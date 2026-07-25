@@ -259,17 +259,18 @@ so a broken service container cannot produce a green run that tested nothing.
 
 The chat UI at http://localhost:8000 — send a message and watch the reply stream
 in, switch providers, cancel mid-stream, and list or resume past conversations
-from the sidebar. The dashboard at http://localhost:8001 shows the telemetry
-those calls produced.
+from the sidebar. The dashboard at http://localhost:8001 shows the telemetry those
+calls produced: note the error rate reads `0 errors · 2 cancelled`, because a user
+pressing Cancel is not a service failure.
 
 | | |
 |---|---|
-| ![Chat with a markdown-rendered reply and the provider selector](docs/screenshots/chat.png) | ![Streaming mid-reply with the Cancel button](docs/screenshots/streaming.png) |
-| **Chat** — markdown reply + provider selector | **Streaming** — live tokens + Cancel |
-| ![Conversation sidebar listing past chats, one resumed](docs/screenshots/conversations.png) | ![Dashboard overview — KPI cards, throughput and latency charts](docs/screenshots/dashboard-overview.png) |
-| **List + resume** conversations | **Dashboard** — KPIs + throughput/latency |
-| ![Log explorer — filterable, color-coded log stream](docs/screenshots/dashboard-logs.png) | |
-| **Log explorer** — status-coded stream, click to expand | |
+| ![Chat reply rendered as markdown with headings, bold text and lists](docs/screenshots/chat.png) | ![A reply streaming in mid-sentence, with the Cancel button replacing Send](docs/screenshots/streaming.png) |
+| **Chat** — replies render as markdown | **Streaming** — live tokens, cancellable mid-reply |
+| ![Sidebar listing past conversations with their message counts](docs/screenshots/conversations.png) | ![Dashboard KPI cards and throughput and latency charts](docs/screenshots/dashboard-overview.png) |
+| **Conversations** — list and resume from the sidebar | **Dashboard** — KPIs, throughput, latency |
+| ![Dashboard filtered to successful Anthropic calls in the last 24h](docs/screenshots/dashboard-filters.png) | ![Per-model table showing calls, error rate and average latency for each model](docs/screenshots/dashboard-by-model.png) |
+| **Filters** scope the charts and the log stream together | **By model** — the multi-provider mix |
 
 ## Tradeoffs
 
