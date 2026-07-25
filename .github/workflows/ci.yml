@@ -7,8 +7,43 @@ on:
 
 jobs:
   tests:
-    name: pytest
+    # The suite runs twice, against both backends it supports.
+    #
+    #  - sqlite:   the default. In-memory, no service, what a bare `pytest` gives you.
+    #  - postgres: the production backend. /stats and /stats/timeseries branch on
+    #              the SQL dialect (ordered-set aggregates, epoch bucketing), so
+    #              SQLite alone would leave the production path untested.
+    #
+    # Postgres is started for both legs (a service container cannot be disabled
+    # per-matrix-leg); the sqlite leg simply ignores it, since an empty
+    # TEST_DATABASE_URL selects the in-memory backend.
+    name: pytest (${{ matrix.backend }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: sqlite
+            database_url: ""
+          - backend: postgres
+            database_url: postgresql+psycopg://postgres:postgres@localhost:5432/chatbot_test
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chatbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,9 +57,23 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      # The suite makes no network calls and needs no Postgres — it runs against
-      # in-memory SQLite with fake provider clients, so CI needs no services.
+      # Force a NON-UTC server timezone. The timestamp columns are naive, and
+      # Postgres converts an aware value from the session TimeZone before dropping
+      # the offset — so a UTC-only CI server would hide exactly the class of bug
+      # tests/test_backend_parity.py exists to catch. Set explicitly rather than
+      # relying on the image's TZ handling.
+      - name: Set a non-UTC timezone on the test database
+        if: matrix.backend == 'postgres'
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d chatbot_test \
+            -c "ALTER DATABASE chatbot_test SET timezone TO 'Asia/Kolkata';"
+          psql -h localhost -U postgres -d chatbot_test -c "SHOW TimeZone;"
+
       - name: Run tests
+        env:
+          TEST_DATABASE_URL: ${{ matrix.database_url }}
         run: python -m pytest -q
 
   build:
@@ -33,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Proves the multi-stage build (both React apps + the Python image) is not
-      # broken, without needing any API keys.
+      # Proves the multi-stage build (both React apps + the Python image) still
+      # works, without needing any API keys.
       - name: Build image
         run: docker build -t chatbot-app:ci .

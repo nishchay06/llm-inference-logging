@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import case, func, or_
@@ -35,19 +35,27 @@ MAX_PAGE_SIZE = 500
 
 # The observability console — ingestion owns the telemetry, so it serves the
 # dashboard (reads inference_logs via the /stats* and /logs endpoints below).
-STATIC_DIR = Path(__file__).parent / "static"
-DASHBOARD_HTML = STATIC_DIR / "dashboard.html"  # legacy plain-HTML fallback
-# The built React dashboard (dashboard/dist) — from `npm run build` or the
-# Docker multi-stage build. Served at / and /dashboard when present (mount at
-# end of file so all API routes take precedence).
+# Built by `npm run build` or the Docker multi-stage build; served at / and
+# /dashboard when present (mounted at end of file so API routes take precedence).
 DASHBOARD_DIST = Path(__file__).parent.parent / "dashboard" / "dist"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+DASHBOARD_NOT_BUILT = (
+    "<h1>Dashboard not built</h1>"
+    "<p>Run <code>cd dashboard &amp;&amp; npm install &amp;&amp; npm run build</code>, "
+    "or use <code>npm run dev</code> for live reload on :5174. "
+    "<code>docker compose up</code> builds it automatically.</p>"
+    "<p>The metrics API is unaffected — see <a href='/docs'>/docs</a>.</p>"
+)
 
 
-@app.get("/dashboard")
+@app.get("/dashboard", include_in_schema=False)
 def dashboard():
+    """The console. Without a build the metrics endpoints still work, so this
+    explains how to build rather than returning a bare 404."""
     index = DASHBOARD_DIST / "index.html"
-    return FileResponse(index if index.is_file() else DASHBOARD_HTML)
+    if index.is_file():
+        return FileResponse(index)
+    return HTMLResponse(DASHBOARD_NOT_BUILT, status_code=503)
 
 
 def _naive_utc(since: datetime | None) -> datetime | None:
@@ -407,3 +415,8 @@ def query_logs(
 # dashboard work use `cd dashboard && npm run dev` (Vite proxies to :8001).
 if DASHBOARD_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(DASHBOARD_DIST), html=True), name="dashboard-app")
+else:
+
+    @app.get("/", include_in_schema=False)
+    def dashboard_root_not_built():
+        return HTMLResponse(DASHBOARD_NOT_BUILT, status_code=503)

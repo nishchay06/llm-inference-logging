@@ -7,12 +7,13 @@ contract AND that a valid payload is actually stored.
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlmodel.pool import StaticPool
+from sqlmodel import Session, select
 
 from db.engine import get_session
 from db.models import InferenceLogRow
 from ingestion.main import app
+
+from conftest import make_engine
 
 VALID_LOG = {
     "provider": "anthropic",
@@ -27,12 +28,7 @@ VALID_LOG = {
 @pytest.fixture
 def client_and_engine():
     # In-memory SQLite standing in for Postgres — same SQLModel models.
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
+    engine = make_engine()
 
     def override_get_session():
         with Session(engine) as session:

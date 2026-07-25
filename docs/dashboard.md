@@ -49,7 +49,7 @@ The **same filter bar drives both planes** (e.g. `status=error` scopes the chart
   `{total, items:[…]}`, newest-first. `q` = case-insensitive substring over
   `input_preview`/`output_preview`/`error_message`. Coexists with `POST /logs`
   (write) — GET queries, POST ingests.
-- `GET /dashboard` — the page; `ingestion/static/` mount + vendored Chart.js.
+- `GET /dashboard` — the page (the built React app in `dashboard/dist`).
 
 ## Aggregation location
 Percentiles, per-model grouping and time buckets are computed **in the

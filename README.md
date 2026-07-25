@@ -80,8 +80,10 @@ cd frontend  && npm install && npm run dev   # chat UI      → :5173, proxies :
 cd dashboard && npm install && npm run dev   # dashboard    → :5174, proxies :8001
 ```
 
-If no build output is present, the services fall back to the plain-HTML pages in
-`app/static/` and `ingestion/static/`.
+The UIs are builds, not server-rendered pages, so a bare checkout has no `/` to
+serve. Docker builds them for you; otherwise run `npm run build` once. If a build
+is missing, the API is unaffected — only `/` is, and it returns a 503 explaining
+how to build rather than a bare 404.
 
 ### Switching providers
 
@@ -216,10 +218,24 @@ pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
-69 tests, ~3 seconds, no network and no Postgres required. They run against
+74 tests, ~3 seconds, no network and no Postgres required. They run against
 in-memory SQLite via a FastAPI dependency override; `TracedClient` tests inject a
 fake provider client and a fake sink. The code is testable precisely because the
 client, sink and database session are all injected.
+
+The same suite also runs against a **real Postgres**, because `/stats` and
+`/stats/timeseries` branch on the SQL dialect and SQLite alone would leave the
+production path untested:
+
+```bash
+createdb chatbot_test
+TEST_DATABASE_URL=postgresql+psycopg://$USER@localhost:5432/chatbot_test python -m pytest -q
+```
+
+CI runs both legs, and deliberately gives the Postgres service a **non-UTC**
+timezone — see `tests/test_backend_parity.py`, which pins the two backends to
+identical answers and asserts the configured dialect is actually the one running,
+so a broken service container cannot produce a green run that tested nothing.
 
 ## Demo
 
@@ -269,6 +285,17 @@ Decisions taken deliberately, with what they cost:
 - **Both services share one Postgres instance.** Ownership is enforced by
   discipline rather than by permissions — the pragmatic choice at this size, and
   the reason the ownership rule is stated explicitly rather than assumed.
+- **Timestamps are stored naive-UTC, not `TIMESTAMPTZ`.** Postgres converts an
+  aware datetime to the session timezone before discarding the offset, so this
+  convention only holds if every write normalises first. That is enforced
+  structurally by the `UtcDateTime` column type rather than left to call sites,
+  and pinned by tests that run against a non-UTC server. `TIMESTAMPTZ` is the
+  better end state — see below.
+- **The UIs are builds with no server-rendered fallback.** Two React apps replaced
+  the original plain-HTML pages, which have been removed rather than kept as a
+  second implementation of the same screens. The cost is that a bare checkout
+  cannot serve `/` until something runs `npm run build`; it returns a 503 saying
+  so, and the API is unaffected.
 
 ## What I'd improve with more time
 
@@ -283,10 +310,12 @@ Decisions taken deliberately, with what they cost:
   db.init`, which never `ALTER`s an existing table — adding a column needs a
   fresh database. Alembic is the fix, and the most clearly missing piece of
   production hygiene.
-- **Run the test suite against Postgres in CI.** Tests use SQLite, so the
-  Postgres-specific branches (`percentile_disc`, epoch bucketing) are verified by
-  hand rather than automatically. A Postgres service container in CI would close
-  that gap.
+- **Store `TIMESTAMPTZ` rather than naive UTC.** The timestamp columns are
+  `TIMESTAMP WITHOUT TIME ZONE`, so correctness depends on every write
+  normalising to UTC first — enforced by a `UtcDateTime` column type after a
+  non-UTC Postgres exposed the gap (see Tradeoffs). `TIMESTAMPTZ` would make the
+  whole class of bug structurally impossible; it is deferred only because it is a
+  column-type change and there are no migrations yet.
 - **Export the counters as real metrics.** `QueueSink.dropped` / `.failed` and
   the worker's retry paths should be Prometheus counters with alerts, not log
   lines. A telemetry pipeline that can quietly lose its own events needs to be

@@ -7,20 +7,18 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
-from sqlmodel.pool import StaticPool
+from sqlmodel import Session
 
 from db.engine import get_session
 from db.models import InferenceLogRow
-from ingestion.main import MAX_PAGE_SIZE, app
+from ingestion.main import DASHBOARD_DIST, MAX_PAGE_SIZE, app
+
+from conftest import make_engine
 
 
 @pytest.fixture
 def client_and_engine():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    SQLModel.metadata.create_all(engine)
+    engine = make_engine()
 
     def override_get_session():
         with Session(engine) as session:
@@ -192,20 +190,19 @@ def test_post_logs_then_get_logs_roundtrip(client_and_engine):
     assert body["items"][0]["input_preview"] == "roundtrip-marker"
 
 
-def test_dashboard_page_served(client_and_engine):
-    # Serves the built React dashboard when present, else the legacy HTML page;
-    # either way it's an HTML document. The UI itself is verified in the browser.
+def test_dashboard_page_served_or_explains_how_to_build(client_and_engine):
+    """Serves the built React dashboard, or a 503 saying how to build it — never a
+    bare 404. Which one depends on the build state of this environment; see
+    tests/test_ui.py for the same reasoning on the chat UI."""
     client, _ = client_and_engine
     resp = client.get("/dashboard")
-    assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
 
-
-def test_vendored_chartjs_served(client_and_engine):
-    client, _ = client_and_engine
-    resp = client.get("/static/chart.umd.min.js")
-    assert resp.status_code == 200
-    assert "Chart" in resp.text
+    if DASHBOARD_DIST.is_dir():
+        assert resp.status_code == 200
+    else:
+        assert resp.status_code == 503
+        assert "npm run build" in resp.text
 
 
 def test_logs_text_search(client_and_engine):

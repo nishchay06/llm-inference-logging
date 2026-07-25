@@ -99,10 +99,35 @@ Tests run against in-memory SQLite via a dependency override, so the suite needs
 no Postgres and finishes in seconds. SQLModel makes the same table definitions
 work on both.
 
-The caveat is real and worth stating: SQLite is not Postgres. Where the two
-diverge in a way that matters — the ordered-set aggregates and epoch bucketing
-behind `/stats` and `/stats/timeseries` — the code branches on the dialect, and
-the Postgres branch is **not** exercised by the test suite. Those queries were
-verified by hand against a real Postgres, and the percentile definition is pinned
-by a test so both branches must agree. Running the suite against Postgres in CI
-would close the gap properly.
+SQLite is not Postgres, though, and where the two diverge in a way that matters —
+the ordered-set aggregates and epoch bucketing behind `/stats` and
+`/stats/timeseries` — the code branches on the dialect. Testing only SQLite would
+leave the production branch uncovered, so the suite runs against **both**: set
+`TEST_DATABASE_URL` to a Postgres URL and the same tests execute there, and CI
+runs both legs.
+
+`tests/test_backend_parity.py` holds that arrangement honest. It pins the two
+branches to identical answers, and asserts the dialect actually in use matches the
+one configured — otherwise a broken CI service container would produce a green
+"postgres" run that silently tested SQLite.
+
+## Timestamps: naive UTC, enforced at the column
+
+Every timestamp column is `TIMESTAMP WITHOUT TIME ZONE`, holding UTC. That
+convention is load-bearing rather than stylistic, because Postgres converts an
+*aware* datetime to the **session** `TimeZone` before discarding the offset — and
+the SDK stamps aware UTC timestamps. Against a server running in UTC that stores
+correctly; against one running in Asia/Kolkata every row lands +5:30 off, silently,
+corrupting the dashboard's time buckets and `since` filters.
+
+Running the suite against a non-UTC Postgres is what surfaced this. The fix is the
+`UtcDateTime` type decorator in `db/models.py`, which normalises on bind so the
+convention holds for **every** write path — including code that constructs a row
+directly instead of going through the ingestion boundary. A Pydantic field
+validator would not have covered that, because SQLModel does not run validators on
+`table=True` models.
+
+`TIMESTAMPTZ` would make the whole class of bug impossible and is the better end
+state. It is deferred because it is a column-type change with no migrations in
+place, and because SQLite ignores `timezone=True` — which would reintroduce a
+backend divergence in the tests.

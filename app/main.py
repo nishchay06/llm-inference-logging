@@ -7,14 +7,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from db.engine import engine, get_session
-from db.models import Conversation, Message
+from db.models import Conversation, Message, to_utc_naive
 from sdk.providers import DEFAULT_MODELS, build_client
 from sdk.sinks import HttpSink, QueueSink
 from sdk.tracing import TracedClient
@@ -80,15 +80,9 @@ if os.getenv("LLM_MODEL") and DEFAULT_PROVIDER in MODEL_FOR:
 MAX_CONTEXT_MESSAGES = 10
 
 
-STATIC_DIR = Path(__file__).parent / "static"
-INDEX_HTML = STATIC_DIR / "index.html"
-# The built React app (frontend/dist) — produced by `npm run build` (locally, or
-# the Docker multi-stage build). Served at "/" when present; see end of file.
+# The built React app (frontend/dist) — produced by `npm run build`, or by the
+# Docker multi-stage build. Served at "/" when present; see end of file.
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
-
-# Legacy static assets (the old plain-HTML UI's marked.min.js) served under
-# /static; kept as the fallback when the React build isn't present.
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/hello")
@@ -192,7 +186,8 @@ def _record_assistant_message(session_id: str, content: str) -> None:
         db.add(Message(session_id=session_id, role="assistant", content=content))
         conv = db.get(Conversation, session_id)
         if conv is not None:
-            conv.updated_at = datetime.now(timezone.utc)
+            # naive UTC, matching every other timestamp column — see to_utc_naive
+            conv.updated_at = to_utc_naive(datetime.now(timezone.utc))
             db.add(conv)
         db.commit()
 
@@ -311,13 +306,21 @@ def get_conversation(session_id: str, db: Session = Depends(get_session)):
 
 
 # Serve the frontend at "/", mounted LAST so every API route above takes
-# precedence. The built React app when present (production / Docker), else the
-# legacy plain-HTML page (a `uvicorn` run without `npm run build` — use
-# `npm run dev` for local frontend work).
+# precedence. Docker builds it for you; locally it needs `npm run build` once (or
+# `npm run dev` on :5173, which proxies here). If it hasn't been built, the API
+# is still fully usable — only "/" is unavailable, and it says why rather than
+# returning a bare 404.
 if FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 else:
 
-    @app.get("/")
-    def index():
-        return FileResponse(INDEX_HTML)
+    @app.get("/", include_in_schema=False)
+    def frontend_not_built():
+        return HTMLResponse(
+            "<h1>Chat UI not built</h1>"
+            "<p>Run <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code>, "
+            "or use <code>npm run dev</code> for live reload on :5173. "
+            "<code>docker compose up</code> builds it automatically.</p>"
+            "<p>The API is unaffected — see <a href='/docs'>/docs</a>.</p>",
+            status_code=503,
+        )

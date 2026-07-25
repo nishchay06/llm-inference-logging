@@ -2,20 +2,15 @@
 
 from datetime import datetime, timezone
 
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlmodel.pool import StaticPool
+from sqlmodel import Session, select
 
 from db.models import Conversation, InferenceLogRow, Message
 
+from conftest import make_engine
+
 
 def _sqlite_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-    return engine
+    return make_engine()
 
 
 def test_conversation_and_messages_roundtrip():

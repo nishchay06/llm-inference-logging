@@ -9,12 +9,13 @@ on generator close, error on exception.
 from types import SimpleNamespace
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlmodel.pool import StaticPool
+from sqlmodel import Session, select
 
 from sdk.providers import AnthropicAdapter, GeminiAdapter, ChatResult
 from sdk.tracing import TracedClient
 from db.models import InferenceLogRow
+
+from conftest import make_engine
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────
@@ -191,10 +192,7 @@ def test_stream_error_emits_error_log_and_reraises():
 def test_inference_log_row_stores_ttft():
     from datetime import datetime, timezone
 
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    SQLModel.metadata.create_all(engine)
+    engine = make_engine()
     with Session(engine) as s:
         s.add(
             InferenceLogRow(

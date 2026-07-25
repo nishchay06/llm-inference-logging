@@ -6,14 +6,15 @@ network.
 from datetime import datetime, timezone
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlmodel.pool import StaticPool
+from sqlmodel import Session, select
 
 from db.models import InferenceLogRow
 from ingestion.store import store_log
 from ingestion.worker import PoisonMessage, handle_entry
 from sdk.events import InferenceLog
 from sdk.sinks import RedisStreamSink
+
+from conftest import make_session
 
 
 def _event(**over):
@@ -42,11 +43,7 @@ class _FakeRedis:
 
 
 def _sqlite_session():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    SQLModel.metadata.create_all(engine)
-    return Session(engine)
+    return make_session()
 
 
 # ── producer ─────────────────────────────────────────────────────────────────
