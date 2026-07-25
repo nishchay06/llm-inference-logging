@@ -235,7 +235,7 @@ pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
-128 tests, ~3 seconds, no network and no Postgres required. They run against
+136 tests, ~3 seconds, no network and no Postgres required. They run against
 in-memory SQLite via a FastAPI dependency override; the instrumentation tests
 inject a fake provider client and a fake sink, and assert that the patch and
 wrapper mechanisms record identical fields. The code is testable precisely because the
@@ -275,6 +275,12 @@ those calls produced.
 
 Decisions taken deliberately, with what they cost:
 
+- **Cancellations are a third outcome, not failures.** `success` / `error` /
+  `cancelled` are counted separately: a user pressing Cancel does not raise the
+  error rate, and a cancelled stream's duration — which runs until the generator
+  is finalized rather than until the user left — is excluded from the latency
+  aggregates. Errors are kept in them, because a timeout is a real latency
+  observation. Cancelled rows stay fully queryable in the log explorer.
 - **Telemetry is dropped rather than allowed to block.** A full `QueueSink` queue
   discards events, and delivery failures are swallowed. Losing observability data
   is acceptable; stalling a user's request is not. Drops and failures are counted

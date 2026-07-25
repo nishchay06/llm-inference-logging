@@ -70,6 +70,17 @@ def _dialect(session: Session) -> str:
     return session.get_bind().dialect.name
 
 
+# A user pressing Cancel is not a service failure, and it is not a latency
+# observation either: a cancelled stream's latency_ms runs until the generator is
+# finalized rather than until the user left, so it is unbounded and arbitrary.
+# Live data showed two cancellations turning a true 0% error rate into 5.3% and a
+# true p99 of 8.2s into 280s. Errors are treated differently on purpose — a call
+# that failed after a timeout is a genuine latency observation worth keeping.
+IS_ERROR = InferenceLogRow.status == "error"
+IS_CANCELLED = InferenceLogRow.status == "cancelled"
+HAS_USABLE_LATENCY = InferenceLogRow.status != "cancelled"
+
+
 def _percentile(sorted_vals: list[float], p: float) -> float | None:
     """Nearest-rank percentile, in Python — the fallback path for backends with
     no ordered-set aggregates (the SQLite used in tests). See `_percentiles`."""
@@ -90,6 +101,8 @@ def _percentiles(session: Session, conds: list) -> tuple:
     `percentile_disc` (not `_cont`) is deliberate: it returns an actual observed
     value, matching the nearest-rank definition `_percentile` implements, so both
     backends give identical answers for identical data.
+
+    Cancelled calls are excluded — see HAS_USABLE_LATENCY.
     """
     if _dialect(session) == "postgresql":
         query = select(
@@ -97,12 +110,12 @@ def _percentiles(session: Session, conds: list) -> tuple:
                 func.percentile_disc(p).within_group(InferenceLogRow.latency_ms.asc())
                 for p in (0.5, 0.95, 0.99)
             ]
-        )
+        ).where(HAS_USABLE_LATENCY)
         for c in conds:
             query = query.where(c)
         return tuple(session.exec(query).one())
 
-    query = select(InferenceLogRow.latency_ms)
+    query = select(InferenceLogRow.latency_ms).where(HAS_USABLE_LATENCY)
     for c in conds:
         query = query.where(c)
     latencies = sorted(v for v in session.exec(query).all() if v is not None)
@@ -156,6 +169,7 @@ class StatsOut(BaseModel):
     total_calls: int
     success_count: int
     error_count: int
+    cancelled_count: int
     error_rate: float
     avg_latency_ms: float | None
     p50_ms: float | None
@@ -183,15 +197,17 @@ def stats(
     query = select(
         func.count(),
         func.sum(case((InferenceLogRow.status == "success", 1), else_=0)),
-        func.sum(case((InferenceLogRow.status != "success", 1), else_=0)),
-        func.avg(InferenceLogRow.latency_ms),
+        func.sum(case((IS_ERROR, 1), else_=0)),
+        func.sum(case((IS_CANCELLED, 1), else_=0)),
+        # Average only over calls whose latency means something.
+        func.avg(case((HAS_USABLE_LATENCY, InferenceLogRow.latency_ms))),
         func.sum(InferenceLogRow.input_tokens),
         func.sum(InferenceLogRow.output_tokens),
     )
     for c in conds:
         query = query.where(c)
 
-    total, success, errors, avg_latency, itok, otok = session.exec(query).one()
+    total, success, errors, cancelled, avg_latency, itok, otok = session.exec(query).one()
     total = total or 0
     errors = errors or 0
     p50, p95, p99 = _percentiles(session, conds)
@@ -200,6 +216,7 @@ def stats(
         total_calls=total,
         success_count=success or 0,
         error_count=errors,
+        cancelled_count=cancelled or 0,
         error_rate=(errors / total) if total else 0.0,
         avg_latency_ms=avg_latency,  # None when the window is empty
         p50_ms=p50,
@@ -242,7 +259,8 @@ def timeseries(
     since = _naive_utc(since)
     bucket = max(1, bucket)
     conds = _log_conditions(status=status, provider=provider, model=model, q=q, since=since)
-    errors_expr = func.sum(case((InferenceLogRow.status != "success", 1), else_=0))
+    errors_expr = func.sum(case((IS_ERROR, 1), else_=0))
+    latency_expr = func.avg(case((HAS_USABLE_LATENCY, InferenceLogRow.latency_ms)))
 
     if _dialect(session) == "postgresql":
         # started_at is stored naive-UTC, so extracting the epoch needs no
@@ -255,7 +273,7 @@ def timeseries(
             bucket_expr,
             func.count(),
             errors_expr,
-            func.avg(InferenceLogRow.latency_ms),
+            latency_expr,
         ).group_by(bucket_expr).order_by(bucket_expr)
         for c in conds:
             query = query.where(c)
@@ -283,9 +301,9 @@ def timeseries(
         b = int(started_at.timestamp() // bucket) * bucket
         agg = buckets.setdefault(b, {"calls": 0, "errors": 0, "sum": 0.0, "n": 0})
         agg["calls"] += 1
-        if status != "success":
+        if status == "error":
             agg["errors"] += 1
-        if lat is not None:
+        if lat is not None and status != "cancelled":
             agg["sum"] += lat
             agg["n"] += 1
 
@@ -329,8 +347,8 @@ def by_model(
         InferenceLogRow.model,
         InferenceLogRow.provider,
         func.count(),
-        func.sum(case((InferenceLogRow.status != "success", 1), else_=0)),
-        func.avg(InferenceLogRow.latency_ms),
+        func.sum(case((IS_ERROR, 1), else_=0)),
+        func.avg(case((HAS_USABLE_LATENCY, InferenceLogRow.latency_ms))),
     ).group_by(InferenceLogRow.model, InferenceLogRow.provider)
     for c in _log_conditions(status=status, provider=provider, model=model, q=q, since=since):
         query = query.where(c)

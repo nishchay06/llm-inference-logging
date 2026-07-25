@@ -9,6 +9,7 @@ export type Stats = {
   total_calls: number;
   success_count: number;
   error_count: number;
+  cancelled_count: number;
   error_rate: number;
   avg_latency_ms: number | null;
   p50_ms: number | null;

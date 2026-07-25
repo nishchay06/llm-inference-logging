@@ -202,7 +202,7 @@ export default class Dashboard extends React.Component<{}, State> {
             {/* KPI cards */}
             <section aria-label="Key metrics" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 16 }}>
               <Kpi kicker="Total calls" value={st ? nfmt(st.total_calls) : "—"} meta={s.filters.window === "all" ? "all time" : "in window"} />
-              <Kpi kicker="Error rate" value={st ? pctFmt(st.error_rate) : "—"} valueColor={kErr ? "#dc2626" : undefined} meta={`${st ? nfmt(st.error_count) : "0"} errors`} />
+              <Kpi kicker="Error rate" value={st ? pctFmt(st.error_rate) : "—"} valueColor={kErr ? "#dc2626" : undefined} meta={errMeta(st)} />
               <Kpi kicker="Latency" value={st ? msFmt(st.avg_latency_ms) : "—"} meta={`p95 ${st ? msFmt(st.p95_ms) : "—"}`} />
               <Kpi kicker="Tokens" value={st ? nfmt(st.total_input_tokens) : "—"} valueSuffix=" in" meta={`${st ? nfmt(st.total_output_tokens) : "0"} out`} />
             </section>
@@ -337,6 +337,14 @@ function Kpi({ kicker, value, valueColor, valueSuffix, meta }: { kicker: string;
       <div className="card-meta">{meta}</div>
     </div>
   );
+}
+
+/** Errors and cancellations are different outcomes: a user pressing Cancel is not
+ *  a service failure, so it is reported next to the error count, never inside it. */
+function errMeta(st: Stats | null) {
+  if (!st) return "0 errors";
+  const errors = `${nfmt(st.error_count)} ${st.error_count === 1 ? "error" : "errors"}`;
+  return st.cancelled_count > 0 ? `${errors} · ${nfmt(st.cancelled_count)} cancelled` : errors;
 }
 
 function ChartEmpty() {

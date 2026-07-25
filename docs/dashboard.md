@@ -66,6 +66,28 @@ than `percentile_cont` so both branches return the same value for the same data
 At genuinely high telemetry volume the next moves are time-based partitioning
 with retention, and a columnar store (ClickHouse) for the aggregate read path.
 
+## Cancellation is a third outcome, not a failure
+
+The aggregates distinguish `success` / `error` / `cancelled` rather than splitting
+on "not success". Two things follow, and both were found by reading real dashboard
+numbers rather than tests:
+
+- **A cancellation is not an error.** With 36 successful calls, 0 errors and 2 user
+  cancellations, the console reported a **5.3% error rate**. The error-rate KPI is
+  what an operator reacts to, so counting a user pressing Cancel as a service
+  failure is actively misleading. `cancelled_count` is now reported alongside.
+- **A cancellation is not a latency observation.** A cancelled stream's
+  `latency_ms` runs until the generator is finalized, not until the user left, so
+  it is unbounded. Two such rows moved p99 from a true 8.2s to **280s** and avg
+  from 2.7s to 11.1s. Cancelled rows are excluded from avg and the percentiles.
+
+Errors are deliberately **kept** in the latency aggregates: a call that failed
+after a timeout is a genuine latency observation, and dropping it would hide the
+slowness most worth alerting on.
+
+Nothing is hidden — cancelled rows remain fully queryable in the log explorer,
+with TTFT, which stays valid because the first token really did arrive when it did.
+
 ## Data caveat
 We store input/output **previews (~200 chars)** + `error_type`/`error_message`,
 not full payloads. The detail view diagnoses from previews + error text, not full
