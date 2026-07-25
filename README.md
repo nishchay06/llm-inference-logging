@@ -205,6 +205,11 @@ one resumes it.
 
 ![Dashboard KPI cards with throughput and latency charts](docs/screenshots/dashboard-overview.png)
 
+**Log explorer** — every call, filterable and newest-first. Previews are
+PII-redacted at the source, so `[EMAIL]` is what was stored, not what was shown.
+
+![Log explorer table listing calls with status, model, latency, TTFT, tokens and redacted previews](docs/screenshots/dashboard-logs.png)
+
 **Filters** scope the charts and the log stream together.
 
 ![Dashboard filtered to successful Anthropic calls in the last 24 hours](docs/screenshots/dashboard-filters.png)
